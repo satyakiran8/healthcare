@@ -1,4 +1,4 @@
-// Healthcare Registration System - Fixed Version with Patient ID Reuse + Today's Count
+// Healthcare Registration System - Modified with Doctor Screen Sync
 // File: HealthcareWebApp.java
 
 import com.sun.net.httpserver.HttpServer;
@@ -229,6 +229,35 @@ public class HealthcareWebApp2 {
             return null; // No existing patient found
         }
 
+        // MODIFIED: Get next token considering doctor consultations
+        static Integer getNextTokenForConsultation() {
+            String sql = """
+                SELECT CASE 
+                    WHEN MIN(p.token) IS NULL THEN NULL
+                    ELSE MIN(p.token)
+                END as next_consultation_token 
+                FROM patients p 
+                WHERE DATE(p.registration_date) = CURRENT_DATE 
+                AND p.patient_id NOT IN (
+                    SELECT DISTINCT d.patient_id FROM doctors d 
+                    WHERE DATE(d.created_at) = CURRENT_DATE 
+                    AND d.patient_id IS NOT NULL
+                )
+            """;
+
+            try (Statement stmt = connection.createStatement()) {
+                ResultSet rs = stmt.executeQuery(sql);
+                if (rs.next()) {
+                    Integer nextToken = rs.getObject("next_consultation_token", Integer.class);
+                    System.out.println("Next token for consultation: " + (nextToken != null ? nextToken : "No pending patients"));
+                    return nextToken; // Can be null if no pending patients
+                }
+            } catch (SQLException e) {
+                System.err.println("Error getting next consultation token: " + e.getMessage());
+            }
+            return null;
+        }
+
         static Integer getNextToken() {
             String sql = """
                 SELECT CASE 
@@ -405,12 +434,20 @@ public class HealthcareWebApp2 {
             }
         }
 
+        // MODIFIED: Token handler now includes next consultation token
         static class TokenHandler implements HttpHandler {
             public void handle(HttpExchange exchange) throws IOException {
                 if ("GET".equals(exchange.getRequestMethod())) {
                     Integer nextToken = DatabaseService.getNextToken();
                     Integer todayCount = DatabaseService.getTodayRegistrationsCount();
-                    String response = String.format("{\"nextToken\": %d, \"todayCount\": %d}", nextToken, todayCount);
+                    Integer nextConsultationToken = DatabaseService.getNextTokenForConsultation();
+
+                    String response = String.format(
+                            "{\"nextToken\": %d, \"todayCount\": %d, \"nextConsultationToken\": %s}",
+                            nextToken,
+                            todayCount,
+                            nextConsultationToken != null ? nextConsultationToken.toString() : "null"
+                    );
 
                     exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
                     exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
@@ -568,6 +605,7 @@ public class HealthcareWebApp2 {
                     --dark-color: #1f2937;
                     --returning-patient-color: #f59e0b;
                     --info-color: #3b82f6;
+                    --consultation-color: #059669;
                 }
                 
                 body {
@@ -640,6 +678,17 @@ public class HealthcareWebApp2 {
                     font-weight: 700;
                 }
                 
+                .consultation-display {
+                    background: linear-gradient(135deg, var(--consultation-color), #047857);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 15px;
+                    text-align: center;
+                    margin: 20px 0;
+                    font-size: 1.2rem;
+                    font-weight: 700;
+                }
+                
                 .count-display {
                     background: linear-gradient(135deg, var(--info-color), #1d4ed8);
                     color: white;
@@ -658,6 +707,7 @@ public class HealthcareWebApp2 {
                 }
                 
                 .stats-row .token-display,
+                .stats-row .consultation-display,
                 .stats-row .count-display {
                     flex: 1;
                     margin: 0;
@@ -780,6 +830,9 @@ public class HealthcareWebApp2 {
                                         <div class="token-display">
                                             <i class="fas fa-ticket-alt me-2"></i>Next Token: <span id="nextToken">Loading...</span>
                                         </div>
+                                        <div class="consultation-display">
+                                            <i class="fas fa-stethoscope me-2"></i>Next Consultation: <span id="nextConsultation">Loading...</span>
+                                        </div>
                                         <div class="count-display">
                                             <i class="fas fa-users me-2"></i>Today: <span id="todayCount">Loading...</span>
                                         </div>
@@ -843,6 +896,8 @@ public class HealthcareWebApp2 {
                         this.initializeElements();
                         this.attachEventListeners();
                         this.loadNextToken();
+                        // Auto-refresh consultation token every 10 seconds
+                        setInterval(() => this.loadNextToken(), 10000);
                     }
 
                     initializeElements() {
@@ -855,6 +910,7 @@ public class HealthcareWebApp2 {
                         this.locationField = document.getElementById('location');
                         this.issueField = document.getElementById('issue');
                         this.nextTokenSpan = document.getElementById('nextToken');
+                        this.nextConsultationSpan = document.getElementById('nextConsultation');
                         this.todayCountSpan = document.getElementById('todayCount');
                         this.historyTableBody = document.getElementById('historyTableBody');
                         this.alertContainer = document.getElementById('alertContainer');
@@ -895,9 +951,19 @@ public class HealthcareWebApp2 {
                             const data = await response.json();
                             this.nextTokenSpan.textContent = data.nextToken;
                             this.todayCountSpan.textContent = data.todayCount;
+                            
+                            // Update consultation token display
+                            if (data.nextConsultationToken !== null) {
+                                this.nextConsultationSpan.textContent = `Token #${data.nextConsultationToken}`;
+                                this.nextConsultationSpan.parentElement.style.background = 'linear-gradient(135deg, #059669, #047857)';
+                            } else {
+                                this.nextConsultationSpan.textContent = 'No Pending';
+                                this.nextConsultationSpan.parentElement.style.background = 'linear-gradient(135deg, #6b7280, #4b5563)';
+                            }
                         } catch (error) {
                             console.error('Error loading token and count:', error);
                             this.nextTokenSpan.textContent = '1';
+                            this.nextConsultationSpan.textContent = 'Error';
                             this.todayCountSpan.textContent = '0';
                         }
                     }
@@ -1091,7 +1157,7 @@ public class HealthcareWebApp2 {
 
                 document.addEventListener('DOMContentLoaded', () => {
                     new HealthcareApp();
-                    console.log('Healthcare Registration System loaded with Patient ID Reuse Feature + Today Count!');
+                    console.log('Healthcare Registration System loaded with Doctor Screen Sync!');
                 });
             </script>
         </body>
@@ -1117,7 +1183,7 @@ public class HealthcareWebApp2 {
             System.out.println("=".repeat(60));
             System.out.println("Server: http://localhost:5000");
             System.out.println("Database: " + DB_URL);
-            System.out.println("Feature: Patient ID Reuse + Today's Count Display");
+            System.out.println("Feature: Doctor Screen Sync + Patient ID Reuse");
             System.out.println("Status: All systems operational");
             System.out.println("=".repeat(60));
             System.out.println("Open browser: http://localhost:5000");

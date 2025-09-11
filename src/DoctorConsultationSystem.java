@@ -1,4 +1,4 @@
-// Complete Fixed Doctor Consultation System - Final Version
+// Complete Fixed Doctor Consultation System - Final Version with Registration Sync
 // File: DoctorConsultationSystem.java
 // Port: 5001
 
@@ -239,9 +239,6 @@ public class DoctorConsultationSystem {
                 createDoctorTable();
                 System.out.println("✓ Database connected successfully!");
 
-                // Test direct insert to verify table works
-                testDirectInsert();
-
             } catch (ClassNotFoundException e) {
                 System.err.println("✗ PostgreSQL JDBC driver not found!");
                 System.exit(1);
@@ -278,41 +275,6 @@ public class DoctorConsultationSystem {
 
             } catch (SQLException e) {
                 System.err.println("✗ Doctor table creation error: " + e.getMessage());
-            }
-        }
-
-        static void testDirectInsert() {
-            String sql = "INSERT INTO doctors (patient_id, medicines, tests, next_visit_days, issue) VALUES (?, ?, ?, ?, ?)";
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, "TEST001");
-                pstmt.setString(2, "[{\"name\":\"Test Medicine\",\"timing\":\"Morning\"}]");
-                pstmt.setString(3, "Blood Test");
-                pstmt.setString(4, "7");
-                pstmt.setString(5, "Test Issue");
-
-                int rows = pstmt.executeUpdate();
-                System.out.println("✓ Test insert result: " + rows + " rows affected");
-
-                // Verify the insert
-                String selectSql = "SELECT * FROM doctors WHERE patient_id = 'TEST001'";
-                try (Statement stmt = connection.createStatement();
-                     ResultSet rs = stmt.executeQuery(selectSql)) {
-                    if (rs.next()) {
-                        System.out.println("✓ Verified test data:");
-                        System.out.println("  Patient ID: " + rs.getString("patient_id"));
-                        System.out.println("  Medicines: " + rs.getString("medicines"));
-                        System.out.println("  Tests: " + rs.getString("tests"));
-
-                        // Clean up test data
-                        try (Statement deleteStmt = connection.createStatement()) {
-                            deleteStmt.executeUpdate("DELETE FROM doctors WHERE patient_id = 'TEST001'");
-                            System.out.println("✓ Test data cleaned up");
-                        }
-                    }
-                }
-            } catch (SQLException e) {
-                System.err.println("✗ Test insert failed: " + e.getMessage());
             }
         }
 
@@ -356,6 +318,35 @@ public class DoctorConsultationSystem {
             }
 
             return patients;
+        }
+
+        // NEW METHOD: Get next consultation token (same logic as patient registration)
+        static Integer getNextTokenForConsultation() {
+            String sql = """
+                        SELECT CASE 
+                            WHEN MIN(p.token) IS NULL THEN NULL
+                            ELSE MIN(p.token)
+                        END as next_consultation_token 
+                        FROM patients p 
+                        WHERE DATE(p.registration_date) = CURRENT_DATE 
+                        AND p.patient_id NOT IN (
+                            SELECT DISTINCT d.patient_id FROM doctors d 
+                            WHERE DATE(d.created_at) = CURRENT_DATE 
+                            AND d.patient_id IS NOT NULL
+                        )
+                    """;
+
+            try (Statement stmt = connection.createStatement()) {
+                ResultSet rs = stmt.executeQuery(sql);
+                if (rs.next()) {
+                    Integer nextToken = rs.getObject("next_consultation_token", Integer.class);
+                    System.out.println("Next token for consultation: " + (nextToken != null ? nextToken : "No pending patients"));
+                    return nextToken; // Can be null if no pending patients
+                }
+            } catch (SQLException e) {
+                System.err.println("Error getting next consultation token: " + e.getMessage());
+            }
+            return null;
         }
 
         static List<DoctorConsultation> getPatientHistory(String patientId) {
@@ -405,13 +396,6 @@ public class DoctorConsultationSystem {
                 pstmt.setString(4, consultation.getNextVisitDays());
                 pstmt.setString(5, consultation.getIssue());
 
-                System.out.println("Executing insert with parameters:");
-                System.out.println("  1. Patient ID: '" + consultation.getPatientId() + "'");
-                System.out.println("  2. Medicines: '" + consultation.getMedicines() + "'");
-                System.out.println("  3. Tests: '" + consultation.getTests() + "'");
-                System.out.println("  4. Next Visit: '" + consultation.getNextVisitDays() + "'");
-                System.out.println("  5. Issue: '" + consultation.getIssue() + "'");
-
                 int rowsAffected = pstmt.executeUpdate();
                 System.out.println("Rows affected: " + rowsAffected);
 
@@ -420,9 +404,6 @@ public class DoctorConsultationSystem {
                     if (generatedKeys.next()) {
                         consultation.setId(generatedKeys.getLong(1));
                         System.out.println("✓ Consultation saved successfully with ID: " + consultation.getId());
-
-                        // Verify what was actually saved
-                        verifyInsertedData(consultation.getId());
                         return true;
                     }
                 }
@@ -435,48 +416,6 @@ public class DoctorConsultationSystem {
                 return false;
             } finally {
                 System.out.println("=== END SAVE CONSULTATION ===\n");
-            }
-        }
-
-        static void verifyInsertedData(Long consultationId) {
-            String sql = """
-                        SELECT 
-                            id,
-                            patient_id,
-                            medicines,
-                            LENGTH(medicines) as medicine_length,
-                            medicines IS NULL as is_null,
-                            medicines = '' as is_empty,
-                            tests,
-                            next_visit_days,
-                            issue,
-                            created_at
-                        FROM doctors 
-                        WHERE id = ?
-                    """;
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setLong(1, consultationId);
-                ResultSet rs = pstmt.executeQuery();
-
-                if (rs.next()) {
-                    System.out.println("=== VERIFICATION: DATA ACTUALLY STORED ===");
-                    System.out.println("ID: " + rs.getLong("id"));
-                    System.out.println("Patient ID: '" + rs.getString("patient_id") + "'");
-                    System.out.println("Medicines: '" + rs.getString("medicines") + "'");
-                    System.out.println("Medicine Length: " + rs.getInt("medicine_length"));
-                    System.out.println("Is NULL: " + rs.getBoolean("is_null"));
-                    System.out.println("Is Empty: " + rs.getBoolean("is_empty"));
-                    System.out.println("Tests: '" + rs.getString("tests") + "'");
-                    System.out.println("Next Visit Days: '" + rs.getString("next_visit_days") + "'");
-                    System.out.println("Issue: '" + rs.getString("issue") + "'");
-                    System.out.println("Created At: " + rs.getTimestamp("created_at"));
-                    System.out.println("=== END VERIFICATION ===\n");
-                } else {
-                    System.out.println("⚠ No data found for verification with ID: " + consultationId);
-                }
-            } catch (SQLException e) {
-                System.err.println("Error verifying inserted data: " + e.getMessage());
             }
         }
     }
@@ -506,6 +445,22 @@ public class DoctorConsultationSystem {
                     json.append("]");
 
                     sendJsonResponse(exchange, 200, json.toString());
+                }
+            }
+        }
+
+        // NEW HANDLER: Get next consultation token for sync with registration system
+        static class NextConsultationTokenHandler implements HttpHandler {
+            public void handle(HttpExchange exchange) throws IOException {
+                if ("GET".equals(exchange.getRequestMethod())) {
+                    Integer nextConsultationToken = DatabaseService.getNextTokenForConsultation();
+
+                    String response = String.format(
+                            "{\"nextConsultationToken\": %s}",
+                            nextConsultationToken != null ? nextConsultationToken.toString() : "null"
+                    );
+
+                    sendJsonResponse(exchange, 200, response);
                 }
             }
         }
@@ -565,7 +520,6 @@ public class DoctorConsultationSystem {
                     String requestBody = readRequestBody(exchange);
                     System.out.println("=== RECEIVED CONSULTATION REQUEST ===");
                     System.out.println("Raw request body: " + requestBody);
-                    System.out.println("Request body length: " + requestBody.length());
 
                     DoctorConsultation consultation = parseConsultationFromJson(requestBody);
 
@@ -603,10 +557,6 @@ public class DoctorConsultationSystem {
             }
 
             private DoctorConsultation parseConsultationFromJson(String json) {
-                System.out.println("=== RAW JSON RECEIVED ===");
-                System.out.println(json);
-                System.out.println("=========================");
-
                 DoctorConsultation consultation = new DoctorConsultation();
 
                 try {
@@ -615,11 +565,10 @@ public class DoctorConsultationSystem {
                     int patientIdEnd = json.indexOf("\"", patientIdStart);
                     String patientId = json.substring(patientIdStart, patientIdEnd);
                     consultation.setPatientId(patientId);
-                    System.out.println("Extracted Patient ID: " + patientId);
 
-                    // Extract medicines - find the actual medicines string
+                    // Extract medicines
                     int medicinesStart = json.indexOf("\"medicines\":\"") + 13;
-                    if (medicinesStart > 12) { // Found medicines key
+                    if (medicinesStart > 12) {
                         int medicinesEnd = json.indexOf("\",\"tests\":", medicinesStart);
                         if (medicinesEnd == -1) {
                             medicinesEnd = json.indexOf("\",\"nextVisitDays\":", medicinesStart);
@@ -631,21 +580,16 @@ public class DoctorConsultationSystem {
                         String medicines = "";
                         if (medicinesEnd > medicinesStart) {
                             medicines = json.substring(medicinesStart, medicinesEnd);
-                            // Clean up escaped quotes
                             medicines = medicines.replace("\\\"", "\"");
-                            System.out.println("Raw extracted medicines: " + medicines);
                         }
 
-                        // If medicines is empty or invalid, set to empty array
                         if (medicines == null || medicines.trim().isEmpty() || medicines.equals("\"\"")) {
                             medicines = "[]";
                         }
 
                         consultation.setMedicines(medicines);
-                        System.out.println("Final medicines set: " + medicines);
                     } else {
                         consultation.setMedicines("[]");
-                        System.out.println("No medicines found, set to empty array");
                     }
 
                     // Extract tests
@@ -655,7 +599,6 @@ public class DoctorConsultationSystem {
                         if (testsEnd > testsStart) {
                             String tests = json.substring(testsStart, testsEnd);
                             consultation.setTests(tests);
-                            System.out.println("Extracted tests: " + tests);
                         }
                     }
 
@@ -666,21 +609,12 @@ public class DoctorConsultationSystem {
                         if (nextVisitEnd > nextVisitStart) {
                             String nextVisit = json.substring(nextVisitStart, nextVisitEnd);
                             consultation.setNextVisitDays(nextVisit);
-                            System.out.println("Extracted next visit: " + nextVisit);
                         }
                     }
 
                 } catch (Exception e) {
                     System.err.println("Error in manual JSON parsing: " + e.getMessage());
-                    e.printStackTrace();
                 }
-
-                System.out.println("=== FINAL CONSULTATION DATA ===");
-                System.out.println("Patient ID: '" + consultation.getPatientId() + "'");
-                System.out.println("Medicines: '" + consultation.getMedicines() + "'");
-                System.out.println("Tests: '" + consultation.getTests() + "'");
-                System.out.println("Next Visit: '" + consultation.getNextVisitDays() + "'");
-                System.out.println("================================");
 
                 return consultation;
             }
@@ -725,6 +659,7 @@ public class DoctorConsultationSystem {
 
             server.createContext("/", new WebHandlers.DoctorHomeHandler());
             server.createContext("/api/pending-patients", new WebHandlers.PendingPatientsHandler());
+            server.createContext("/api/next-consultation-token", new WebHandlers.NextConsultationTokenHandler());
             server.createContext("/api/consultation-history", new WebHandlers.ConsultationHistoryHandler());
             server.createContext("/api/save-consultation", new WebHandlers.SaveConsultationHandler());
 
@@ -736,6 +671,7 @@ public class DoctorConsultationSystem {
             System.out.println("📋 Access doctor panel at: http://localhost:5001");
             System.out.println("💾 Database: " + DB_URL);
             System.out.println("🔄 Server is ready to handle consultations...");
+            System.out.println("🔗 Registration sync endpoint: /api/next-consultation-token");
             System.out.println("\n⚠  To stop server: Press Ctrl+C");
 
         } catch (Exception e) {
@@ -762,6 +698,7 @@ public class DoctorConsultationSystem {
                             --success-color: #10b981;
                             --danger-color: #ef4444;
                             --dark-color: #1f2937;
+                            --consultation-color: #059669;
                         }
                 
                         body {
@@ -784,6 +721,21 @@ public class DoctorConsultationSystem {
                             color: white;
                             padding: 30px;
                             text-align: center;
+                            position: relative;
+                        }
+                
+                        .consultation-token-display {
+                            position: absolute;
+                            top: 15px;
+                            right: 15px;
+                            background: rgba(255, 255, 255, 0.2);
+                            backdrop-filter: blur(10px);
+                            color: white;
+                            padding: 10px 20px;
+                            border-radius: 25px;
+                            font-weight: 700;
+                            font-size: 1rem;
+                            border: 2px solid rgba(255, 255, 255, 0.3);
                         }
                 
                         .consultation-section {
@@ -801,6 +753,7 @@ public class DoctorConsultationSystem {
                             margin: 10px 0;
                             cursor: pointer;
                             transition: all 0.3s ease;
+                            position: relative;
                         }
                 
                         .patient-card:hover {
@@ -811,6 +764,32 @@ public class DoctorConsultationSystem {
                         .patient-card.selected {
                             border-color: var(--primary-color);
                             background: #f0fdf4;
+                        }
+                
+                        .patient-card.next-consultation {
+                            border-color: var(--consultation-color);
+                            background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+                            box-shadow: 0 5px 20px rgba(5, 150, 105, 0.3);
+                        }
+                
+                        .patient-card.next-consultation::after {
+                            content: "NEXT";
+                            position: absolute;
+                            top: -10px;
+                            right: -10px;
+                            background: var(--consultation-color);
+                            color: white;
+                            padding: 5px 12px;
+                            border-radius: 15px;
+                            font-size: 0.75rem;
+                            font-weight: 700;
+                            animation: pulse 2s infinite;
+                        }
+                
+                        @keyframes pulse {
+                            0% { transform: scale(1); }
+                            50% { transform: scale(1.05); }
+                            100% { transform: scale(1); }
                         }
                 
                         .form-control, .form-select {
@@ -857,13 +836,14 @@ public class DoctorConsultationSystem {
                         .status-indicator {
                             position: fixed;
                             top: 20px;
-                            right: 20px;
+                            left: 20px;
                             background: var(--primary-color);
                             color: white;
                             padding: 10px 20px;
                             border-radius: 50px;
                             font-weight: 600;
                             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+                            z-index: 1000;
                         }
                 
                         .timing-options {
@@ -901,6 +881,15 @@ public class DoctorConsultationSystem {
                             max-height: 200px;
                             overflow-y: auto;
                         }
+                
+                        .sync-status {
+                            background: rgba(16, 185, 129, 0.1);
+                            border: 1px solid var(--success-color);
+                            border-radius: 10px;
+                            padding: 10px;
+                            margin: 10px 0;
+                            font-size: 0.9rem;
+                        }
                     </style>
                 </head>
                 <body>
@@ -913,12 +902,18 @@ public class DoctorConsultationSystem {
                             <div class="header">
                                 <h1><i class="fas fa-user-md me-3"></i>Doctor Consultation System</h1>
                                 <p class="mb-0 fs-5">Patient Management & Consultation - localhost:5001</p>
+                                <div class="consultation-token-display" id="consultationTokenDisplay">
+                                    <i class="fas fa-stethoscope me-2"></i>Next: <span id="nextConsultationToken">Loading...</span>
+                                </div>
                             </div>
                 
                             <div class="row">
                                 <div class="col-lg-4">
                                     <div class="consultation-section">
                                         <h3 class="section-title"><i class="fas fa-users me-2"></i>Pending Patients</h3>
+                                        <div class="sync-status">
+                                            <i class="fas fa-sync me-2"></i>Synced with Registration System - Auto-refresh every 10s
+                                        </div>
                                         <div id="patientsList"></div>
                                     </div>
                                 </div>
@@ -994,11 +989,6 @@ public class DoctorConsultationSystem {
                                             </form>
                                         </div>
                 
-                                        <div id="debugInfo" class="debug-info" style="display: block;">
-                                            <h6>Debug Information:</h6>
-                                            <div id="debugContent">System ready for debugging...</div>
-                                        </div>
-                
                                         <div id="patientHistory" class="mt-4" style="display: none;">
                                             <h5><i class="fas fa-history me-2"></i>Consultation History</h5>
                                             <div id="historyContent"></div>
@@ -1014,6 +1004,7 @@ public class DoctorConsultationSystem {
                         class DoctorApp {
                             constructor() {
                                 this.selectedPatient = null;
+                                this.currentPendingPatients = [];
                                 this.defaultMedicines = [
                                     { name: 'Paracetamol 500mg', id: 'med1' },
                                     { name: 'Amoxicillin 250mg', id: 'med2' },
@@ -1033,8 +1024,13 @@ public class DoctorConsultationSystem {
                                 this.loadPendingPatients();
                                 this.setupMedicinesSection();
                                 this.attachEventListeners();
-                                setInterval(() => this.loadPendingPatients(), 30000);
-                                this.showDebug('Doctor Consultation System initialized successfully');
+                                // Auto-refresh every 10 seconds
+                                setInterval(() => {
+                                    this.loadPendingPatients();
+                                    this.updateConsultationToken();
+                                }, 10000);
+                                this.updateConsultationToken();
+                                console.log('Doctor Consultation System initialized with Registration Sync');
                             }
                 
                             attachEventListeners() {
@@ -1044,11 +1040,27 @@ public class DoctorConsultationSystem {
                                 });
                             }
                 
-                            showDebug(message) {
-                                const debugContent = document.getElementById('debugContent');
-                                debugContent.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${message}</div>`;
-                                debugContent.scrollTop = debugContent.scrollHeight;
-                                console.log(message);
+                            async updateConsultationToken() {
+                                try {
+                                    const response = await fetch('/api/next-consultation-token');
+                                    if (response.ok) {
+                                        const data = await response.json();
+                                        const tokenSpan = document.getElementById('nextConsultationToken');
+                
+                                        if (data.nextConsultationToken !== null) {
+                                            tokenSpan.textContent = `Token #${data.nextConsultationToken}`;
+                                            tokenSpan.parentElement.style.background = 'rgba(5, 150, 105, 0.2)';
+                                            tokenSpan.parentElement.style.border = '2px solid rgba(5, 150, 105, 0.5)';
+                                        } else {
+                                            tokenSpan.textContent = 'No Pending';
+                                            tokenSpan.parentElement.style.background = 'rgba(107, 114, 128, 0.2)';
+                                            tokenSpan.parentElement.style.border = '2px solid rgba(107, 114, 128, 0.3)';
+                                        }
+                                    }
+                                } catch (error) {
+                                    console.error('Error updating consultation token:', error);
+                                    document.getElementById('nextConsultationToken').textContent = 'Error';
+                                }
                             }
                 
                             async loadPendingPatients() {
@@ -1059,6 +1071,7 @@ public class DoctorConsultationSystem {
                                     }
                 
                                     const patients = await response.json();
+                                    this.currentPendingPatients = patients;
                                     const patientsList = document.getElementById('patientsList');
                 
                                     if (patients.length === 0) {
@@ -1069,39 +1082,46 @@ public class DoctorConsultationSystem {
                                                 <small>Waiting for new registrations...</small>
                                             </div>
                                         `;
-                                        this.showDebug('No pending patients found');
                                         return;
                                     }
                 
-                                    patientsList.innerHTML = patients.map(patient => `
-                                        <div class="patient-card" data-patient-id="${patient.patientId}" onclick="doctorApp.selectPatient('${patient.patientId}')">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <h6 class="mb-1"><i class="fas fa-user me-2"></i>${patient.name}</h6>
-                                                    <small class="text-muted">ID: ${patient.patientId}</small>
-                                                    <div class="mt-2">
-                                                        <span class="badge bg-primary">Token #${patient.token}</span>
-                                                        <span class="badge bg-secondary">${patient.age}Y ${patient.gender}</span>
+                                    // Find the next consultation patient (lowest token number)
+                                    const nextPatient = patients.length > 0 ? patients[0] : null;
+                
+                                    patientsList.innerHTML = patients.map((patient, index) => {
+                                        const isNext = nextPatient && patient.token === nextPatient.token;
+                                        const cardClass = isNext ? 'patient-card next-consultation' : 'patient-card';
+                
+                                        return `
+                                            <div class="${cardClass}" data-patient-id="${patient.patientId}" onclick="doctorApp.selectPatient('${patient.patientId}')">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        <h6 class="mb-1"><i class="fas fa-user me-2"></i>${patient.name}</h6>
+                                                        <small class="text-muted">ID: ${patient.patientId}</small>
+                                                        <div class="mt-2">
+                                                            <span class="badge ${isNext ? 'bg-success' : 'bg-primary'}">Token #${patient.token}</span>
+                                                            <span class="badge bg-secondary">${patient.age}Y ${patient.gender}</span>
+                                                            ${isNext ? '<span class="badge bg-warning text-dark">NEXT</span>' : ''}
+                                                        </div>
+                                                    </div>
+                                                    <div class="text-end">
+                                                        <i class="fas fa-chevron-right text-muted"></i>
                                                     </div>
                                                 </div>
-                                                <div class="text-end">
-                                                    <i class="fas fa-chevron-right text-muted"></i>
+                                                <div class="mt-2">
+                                                    <small><i class="fas fa-map-marker-alt me-1"></i>${patient.location}</small>
+                                                </div>
+                                                <div class="mt-2">
+                                                    <small class="text-primary"><i class="fas fa-notes-medical me-1"></i>${patient.issue}</small>
                                                 </div>
                                             </div>
-                                            <div class="mt-2">
-                                                <small><i class="fas fa-map-marker-alt me-1"></i>${patient.location}</small>
-                                            </div>
-                                            <div class="mt-2">
-                                                <small class="text-primary"><i class="fas fa-notes-medical me-1"></i>${patient.issue}</small>
-                                            </div>
-                                        </div>
-                                    `).join('');
+                                        `;
+                                    }).join('');
                 
-                                    this.showDebug(`Loaded ${patients.length} pending patients`);
+                                    console.log(`Loaded ${patients.length} pending patients. Next: ${nextPatient ? nextPatient.token : 'None'}`);
                 
                                 } catch (error) {
                                     console.error('Error loading patients:', error);
-                                    this.showDebug('ERROR loading patients: ' + error.message);
                                 }
                             }
                 
@@ -1109,21 +1129,23 @@ public class DoctorConsultationSystem {
                                 document.querySelectorAll('.patient-card').forEach(card => {
                                     card.classList.remove('selected');
                                 });
-                                document.querySelector(`[data-patient-id="${patientId}"]`).classList.add('selected');
+                                const selectedCard = document.querySelector(`[data-patient-id="${patientId}"]`);
+                                if (selectedCard) {
+                                    selectedCard.classList.add('selected');
+                                }
+                
                                 this.resetForm();
                                 this.showPatientDetails(patientId);
                                 document.getElementById('selectedPatientId').value = patientId;
                                 document.getElementById('consultationForm').style.display = 'block';
                                 this.loadPatientHistory(patientId);
                                 this.selectedPatient = patientId;
-                                this.showDebug('Selected patient: ' + patientId);
+                                console.log('Selected patient: ' + patientId);
                             }
                 
                             async showPatientDetails(patientId) {
                                 try {
-                                    const response = await fetch('/api/pending-patients');
-                                    const patients = await response.json();
-                                    const patient = patients.find(p => p.patientId === patientId);
+                                    const patient = this.currentPendingPatients.find(p => p.patientId === patientId);
                 
                                     if (patient) {
                                         document.getElementById('patientInfo').innerHTML = `
@@ -1204,7 +1226,6 @@ public class DoctorConsultationSystem {
                                         }
                                     });
                                 });
-                                this.showDebug('Medicines section setup completed');
                             }
                 
                             async loadPatientHistory(patientId) {
@@ -1246,10 +1267,8 @@ public class DoctorConsultationSystem {
                                         `).join('');
                                     }
                                     document.getElementById('patientHistory').style.display = 'block';
-                                    this.showDebug(`Loaded ${history.length} consultation history records`);
                                 } catch (error) {
                                     console.error('Error loading patient history:', error);
-                                    this.showDebug('ERROR loading patient history: ' + error.message);
                                 }
                             }
                 
@@ -1270,12 +1289,10 @@ public class DoctorConsultationSystem {
                             }
                 
                             async saveConsultation() {
-                                this.showDebug('=== FRONTEND: Starting consultation save ===');
                                 const patientId = document.getElementById('selectedPatientId').value;
                 
                                 if (!patientId) {
                                     this.showAlert('Please select a patient first', 'danger');
-                                    this.showDebug('ERROR: No patient selected');
                                     return;
                                 }
                 
@@ -1307,12 +1324,8 @@ public class DoctorConsultationSystem {
                 
                                     const nextVisitDays = document.getElementById('nextVisitDays').value;
                 
-                                    this.showDebug(`Collected ${selectedMedicines.length} medicines, ${selectedTests.length} tests`);
-                                    this.showDebug('Raw medicines array: ' + JSON.stringify(selectedMedicines));
-                
                                     if (selectedMedicines.length === 0 && selectedTests.length === 0) {
                                         this.showAlert('Please select at least one medicine or test', 'warning');
-                                        this.showDebug('ERROR: No medicines or tests selected');
                                         return;
                                     }
                 
@@ -1323,8 +1336,6 @@ public class DoctorConsultationSystem {
                                         nextVisitDays: nextVisitDays && nextVisitDays.trim() !== "" ? nextVisitDays : ""
                                     };
                 
-                                    this.showDebug('Final data to send: ' + JSON.stringify(consultationData, null, 2));
-                
                                     const response = await fetch('/api/save-consultation', {
                                         method: 'POST',
                                         headers: { 
@@ -1334,29 +1345,25 @@ public class DoctorConsultationSystem {
                                         body: JSON.stringify(consultationData)
                                     });
                 
-                                    this.showDebug(`Server response status: ${response.status} ${response.statusText}`);
-                
                                     if (!response.ok) {
                                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                                     }
                 
                                     const result = await response.json();
-                                    this.showDebug('Server response: ' + JSON.stringify(result));
                 
                                     if (result.success) {
-                                        this.showAlert('Consultation completed successfully!', 'success');
-                                        this.showDebug('SUCCESS: Consultation saved successfully');
+                                        this.showAlert('Consultation completed successfully! Registration system will be updated automatically.', 'success');
                                         this.completeReset();
+                                        // Immediately refresh both lists to sync with registration system
                                         this.loadPendingPatients();
+                                        this.updateConsultationToken();
                                     } else {
                                         this.showAlert(result.message || 'Failed to save consultation', 'danger');
-                                        this.showDebug('ERROR: ' + (result.message || 'Failed to save consultation'));
                                     }
                 
                                 } catch (error) {
-                                    console.error('FRONTEND: Save consultation error:', error);
+                                    console.error('Save consultation error:', error);
                                     this.showAlert('Network error. Please try again: ' + error.message, 'danger');
-                                    this.showDebug('NETWORK ERROR: ' + error.message);
                                 } finally {
                                     saveBtn.disabled = false;
                                     saveBtn.innerHTML = '<i class="fas fa-check-circle me-2"></i>Complete Consultation';
@@ -1401,12 +1408,11 @@ public class DoctorConsultationSystem {
                         let doctorApp;
                         document.addEventListener('DOMContentLoaded', () => {
                             doctorApp = new DoctorApp();
-                            console.log('Doctor Consultation System loaded successfully!');
+                            console.log('Doctor Consultation System with Registration Sync loaded successfully!');
                         });
                     </script>
                 </body>
                 </html>
                 """;
-
     }
 }
