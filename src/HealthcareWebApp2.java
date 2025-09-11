@@ -1,4 +1,4 @@
-// Healthcare Registration System - Fixed Version with Patient ID Reuse
+// Healthcare Registration System - Fixed Version with Patient ID Reuse + Today's Count
 // File: HealthcareWebApp.java
 
 import com.sun.net.httpserver.HttpServer;
@@ -253,6 +253,23 @@ public class HealthcareWebApp2 {
             return 1;
         }
 
+        // NEW METHOD: Get today's registrations count
+        static Integer getTodayRegistrationsCount() {
+            String sql = "SELECT COUNT(*) as count FROM patients WHERE registration_date = CURRENT_DATE";
+
+            try (Statement stmt = connection.createStatement()) {
+                ResultSet rs = stmt.executeQuery(sql);
+                if (rs.next()) {
+                    int count = rs.getInt("count");
+                    System.out.println("Today's registrations count: " + count);
+                    return count;
+                }
+            } catch (SQLException e) {
+                System.err.println("Error getting today's count: " + e.getMessage());
+            }
+            return 0;
+        }
+
         static boolean canRegisterToday(String phoneNumber, String name) {
             String sql = """
                 SELECT registration_time FROM patients 
@@ -392,7 +409,8 @@ public class HealthcareWebApp2 {
             public void handle(HttpExchange exchange) throws IOException {
                 if ("GET".equals(exchange.getRequestMethod())) {
                     Integer nextToken = DatabaseService.getNextToken();
-                    String response = String.format("{\"nextToken\": %d}", nextToken);
+                    Integer todayCount = DatabaseService.getTodayRegistrationsCount();
+                    String response = String.format("{\"nextToken\": %d, \"todayCount\": %d}", nextToken, todayCount);
 
                     exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
                     exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
@@ -549,6 +567,7 @@ public class HealthcareWebApp2 {
                     --danger-color: #ef4444;
                     --dark-color: #1f2937;
                     --returning-patient-color: #f59e0b;
+                    --info-color: #3b82f6;
                 }
                 
                 body {
@@ -619,6 +638,29 @@ public class HealthcareWebApp2 {
                     margin: 20px 0;
                     font-size: 1.2rem;
                     font-weight: 700;
+                }
+                
+                .count-display {
+                    background: linear-gradient(135deg, var(--info-color), #1d4ed8);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 15px;
+                    text-align: center;
+                    margin: 20px 0;
+                    font-size: 1.2rem;
+                    font-weight: 700;
+                }
+                
+                .stats-row {
+                    display: flex;
+                    gap: 20px;
+                    margin: 20px 0;
+                }
+                
+                .stats-row .token-display,
+                .stats-row .count-display {
+                    flex: 1;
+                    margin: 0;
                 }
                 
                 .table {
@@ -734,8 +776,13 @@ public class HealthcareWebApp2 {
                                         <textarea class="form-control" id="issue" rows="3" required></textarea>
                                     </div>
 
-                                    <div class="token-display">
-                                        <i class="fas fa-ticket-alt me-2"></i>Next Token: <span id="nextToken">Loading...</span>
+                                    <div class="stats-row">
+                                        <div class="token-display">
+                                            <i class="fas fa-ticket-alt me-2"></i>Next Token: <span id="nextToken">Loading...</span>
+                                        </div>
+                                        <div class="count-display">
+                                            <i class="fas fa-users me-2"></i>Today: <span id="todayCount">Loading...</span>
+                                        </div>
                                     </div>
 
                                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
@@ -808,6 +855,7 @@ public class HealthcareWebApp2 {
                         this.locationField = document.getElementById('location');
                         this.issueField = document.getElementById('issue');
                         this.nextTokenSpan = document.getElementById('nextToken');
+                        this.todayCountSpan = document.getElementById('todayCount');
                         this.historyTableBody = document.getElementById('historyTableBody');
                         this.alertContainer = document.getElementById('alertContainer');
                         this.submitBtn = document.getElementById('submitBtn');
@@ -846,9 +894,11 @@ public class HealthcareWebApp2 {
                             const response = await fetch('/api/next-token');
                             const data = await response.json();
                             this.nextTokenSpan.textContent = data.nextToken;
+                            this.todayCountSpan.textContent = data.todayCount;
                         } catch (error) {
-                            console.error('Error loading next token:', error);
+                            console.error('Error loading token and count:', error);
                             this.nextTokenSpan.textContent = '1';
+                            this.todayCountSpan.textContent = '0';
                         }
                     }
 
@@ -1041,7 +1091,7 @@ public class HealthcareWebApp2 {
 
                 document.addEventListener('DOMContentLoaded', () => {
                     new HealthcareApp();
-                    console.log('Healthcare Registration System loaded with Patient ID Reuse Feature!');
+                    console.log('Healthcare Registration System loaded with Patient ID Reuse Feature + Today Count!');
                 });
             </script>
         </body>
@@ -1067,7 +1117,7 @@ public class HealthcareWebApp2 {
             System.out.println("=".repeat(60));
             System.out.println("Server: http://localhost:5000");
             System.out.println("Database: " + DB_URL);
-            System.out.println("Feature: Patient ID Reuse for Returning Patients");
+            System.out.println("Feature: Patient ID Reuse + Today's Count Display");
             System.out.println("Status: All systems operational");
             System.out.println("=".repeat(60));
             System.out.println("Open browser: http://localhost:5000");
