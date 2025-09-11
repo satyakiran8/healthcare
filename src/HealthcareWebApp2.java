@@ -1,4 +1,4 @@
-// Healthcare Registration System - Fixed Version
+// Healthcare Registration System - Fixed Version with Patient ID Reuse
 // File: HealthcareWebApp.java
 
 import com.sun.net.httpserver.HttpServer;
@@ -137,6 +137,7 @@ public class HealthcareWebApp2 {
                     stmt.execute(createTableSQL);
                     stmt.execute("CREATE INDEX idx_patients_phone_number ON patients(phone_number)");
                     stmt.execute("CREATE INDEX idx_patients_registration_date ON patients(registration_date)");
+                    stmt.execute("CREATE INDEX idx_patients_phone_name ON patients(phone_number, name)");
                     System.out.println("Table created successfully with correct structure!");
 
                     // Verify table structure for new table
@@ -207,6 +208,27 @@ public class HealthcareWebApp2 {
             return history;
         }
 
+        // NEW METHOD: Get existing patient_id for returning patients
+        static String getExistingPatientId(String phoneNumber, String name) {
+            String sql = "SELECT patient_id FROM patients WHERE phone_number = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) ORDER BY registration_time ASC LIMIT 1";
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, phoneNumber);
+                pstmt.setString(2, name);
+                ResultSet rs = pstmt.executeQuery();
+
+                if (rs.next()) {
+                    String existingPatientId = rs.getString("patient_id");
+                    System.out.println("Found existing patient_id: " + existingPatientId + " for " + name + " (" + phoneNumber + ")");
+                    return existingPatientId;
+                }
+            } catch (SQLException e) {
+                System.err.println("Error checking existing patient_id: " + e.getMessage());
+            }
+
+            return null; // No existing patient found
+        }
+
         static Integer getNextToken() {
             String sql = """
                 SELECT CASE 
@@ -234,7 +256,7 @@ public class HealthcareWebApp2 {
         static boolean canRegisterToday(String phoneNumber, String name) {
             String sql = """
                 SELECT registration_time FROM patients 
-                WHERE phone_number = ? AND name = ? AND registration_date = CURRENT_DATE 
+                WHERE phone_number = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?)) AND registration_date = CURRENT_DATE 
                 ORDER BY registration_time DESC LIMIT 1
             """;
 
@@ -257,6 +279,22 @@ public class HealthcareWebApp2 {
         }
 
         static boolean registerPatient(Patient patient) {
+            // MODIFIED: Check for existing patient_id first
+            String existingPatientId = getExistingPatientId(patient.getPhoneNumber(), patient.getName());
+            if (existingPatientId != null) {
+                patient.setPatientId(existingPatientId);
+                System.out.println("Reusing existing patient_id: " + existingPatientId + " for returning patient: " + patient.getName());
+            } else {
+                // Generate new patient_id only for new patients
+                String newPatientId;
+                do {
+                    newPatientId = generatePatientId();
+                } while (isPatientIdExists(newPatientId)); // Ensure uniqueness
+
+                patient.setPatientId(newPatientId);
+                System.out.println("Generated new patient_id: " + newPatientId + " for new patient: " + patient.getName());
+            }
+
             String sql = """
                 INSERT INTO patients (phone_number, name, email, patient_id, age, gender, location, issue, token, registration_time, registration_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -282,7 +320,8 @@ public class HealthcareWebApp2 {
                         patient.setId(generatedKeys.getLong(1));
                     }
                     System.out.println("Patient registered successfully: " + patient.getName() +
-                            " (ID: " + patient.getPatientId() + ", Token: " + patient.getToken() + ")");
+                            " (ID: " + patient.getPatientId() + ", Token: " + patient.getToken() +
+                            (existingPatientId != null ? " - RETURNING PATIENT)" : " - NEW PATIENT)"));
                     return true;
                 }
             } catch (SQLException e) {
@@ -290,6 +329,24 @@ public class HealthcareWebApp2 {
                 System.err.println("SQL State: " + e.getSQLState());
                 System.err.println("Error Code: " + e.getErrorCode());
             }
+            return false;
+        }
+
+        // NEW METHOD: Check if patient_id already exists
+        static boolean isPatientIdExists(String patientId) {
+            String sql = "SELECT COUNT(*) as count FROM patients WHERE patient_id = ?";
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, patientId);
+                ResultSet rs = pstmt.executeQuery();
+
+                if (rs.next()) {
+                    return rs.getInt("count") > 0;
+                }
+            } catch (SQLException e) {
+                System.err.println("Error checking patient_id existence: " + e.getMessage());
+            }
+
             return false;
         }
     }
@@ -362,9 +419,8 @@ public class HealthcareWebApp2 {
 
                     try {
                         Patient patient = parsePatientFromJson(requestBody);
-                        patient.setPatientId(DatabaseService.generatePatientId());
 
-                        System.out.println("Processing patient: " + patient.getName() + " (ID: " + patient.getPatientId() + ")");
+                        System.out.println("Processing patient: " + patient.getName() + " (" + patient.getPhoneNumber() + ")");
 
                         String validationError = validatePatient(patient);
                         if (validationError != null) {
@@ -384,9 +440,16 @@ public class HealthcareWebApp2 {
                         patient.setRegistrationDate(LocalDate.now());
 
                         if (DatabaseService.registerPatient(patient)) {
+                            String existingPatientId = DatabaseService.getExistingPatientId(patient.getPhoneNumber(), patient.getName());
+                            boolean isReturningPatient = existingPatientId != null;
+
+                            String successMessage = isReturningPatient ?
+                                    "Welcome back! Registered with existing Patient ID." :
+                                    "New patient registered successfully!";
+
                             String successResponse = String.format(
-                                    "{\"success\": true, \"message\": \"Patient registered successfully!\", \"token\": %d, \"patientId\": \"%s\", \"registrationTime\": \"%s\"}",
-                                    patient.getToken(), patient.getPatientId(), patient.getRegistrationTime().toString()
+                                    "{\"success\": true, \"message\": \"%s\", \"token\": %d, \"patientId\": \"%s\", \"registrationTime\": \"%s\", \"isReturningPatient\": %b}",
+                                    successMessage, patient.getToken(), patient.getPatientId(), patient.getRegistrationTime().toString(), isReturningPatient
                             );
                             sendJsonResponse(exchange, 200, successResponse);
                         } else {
@@ -485,6 +548,7 @@ public class HealthcareWebApp2 {
                     --success-color: #10b981;
                     --danger-color: #ef4444;
                     --dark-color: #1f2937;
+                    --returning-patient-color: #f59e0b;
                 }
                 
                 body {
@@ -592,6 +656,24 @@ public class HealthcareWebApp2 {
                     font-weight: 600;
                     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
                 }
+                
+                .returning-patient-badge {
+                    background: linear-gradient(135deg, var(--returning-patient-color), #d97706);
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 15px;
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                }
+                
+                .new-patient-badge {
+                    background: linear-gradient(135deg, var(--success-color), #059669);
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 15px;
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                }
             </style>
         </head>
         <body>
@@ -604,13 +686,14 @@ public class HealthcareWebApp2 {
                     <div class="header">
                         <h1><i class="fas fa-hospital-user me-3"></i>Healthcare Registration System</h1>
                         <p class="mb-0 fs-5">Complete Patient Registration & Management - localhost:5000</p>
+                        <p class="mb-0 mt-2"><i class="fas fa-info-circle me-2"></i>Returning patients will reuse their existing Patient ID</p>
                     </div>
 
                     <div class="row">
                         <div class="col-lg-5">
                             <div class="form-section">
                                 <h3 class="section-title"><i class="fas fa-user-plus me-2"></i>Patient Registration</h3>
-                                <p class="text-muted mb-4"><i class="fas fa-id-card me-2"></i>Patient ID will be automatically generated</p>
+                                <p class="text-muted mb-4"><i class="fas fa-id-card me-2"></i>New patients get unique ID, returning patients reuse existing ID</p>
                                 
                                 <div id="alertContainer"></div>
                                 
@@ -697,7 +780,7 @@ public class HealthcareWebApp2 {
                                 <div class="mt-3">
                                     <small class="text-muted">
                                         <i class="fas fa-info-circle me-1"></i>
-                                        Double-click on any row to auto-fill the form
+                                        Double-click on any row to auto-fill the form. Same Patient ID for returning patients.
                                     </small>
                                 </div>
                             </div>
@@ -784,10 +867,20 @@ public class HealthcareWebApp2 {
                                 return;
                             }
 
-                            this.historyTableBody.innerHTML = history.map(patient => `
+                            // Group by patient_id to show unique patient IDs
+                            const patientIds = [...new Set(history.map(p => p.patientId))];
+                            
+                            this.historyTableBody.innerHTML = history.map((patient, index) => {
+                                const isFirstOccurrence = history.findIndex(p => p.patientId === patient.patientId) === index;
+                                const patientIdBadge = isFirstOccurrence ? 
+                                    `<span class="badge bg-secondary">${patient.patientId}</span>` +
+                                    (patientIds.length > 1 ? ' <span class="returning-patient-badge">REUSED ID</span>' : '') :
+                                    `<span class="badge bg-light text-dark">${patient.patientId}</span> <small class="text-muted">(same ID)</small>`;
+                                
+                                return `
                                 <tr data-patient='${JSON.stringify(patient)}' style="animation: fadeIn 0.5s ease-in;">
                                     <td><strong>${patient.name}</strong></td>
-                                    <td><span class="badge bg-secondary">${patient.patientId}</span></td>
+                                    <td>${patientIdBadge}</td>
                                     <td>${patient.age}</td>
                                     <td>
                                         <i class="fas ${patient.gender === 'Male' ? 'fa-mars text-primary' : 
@@ -798,7 +891,7 @@ public class HealthcareWebApp2 {
                                     <td><span class="badge bg-primary">#${patient.token}</span></td>
                                     <td><small>${new Date(patient.registrationTime).toLocaleString()}</small></td>
                                 </tr>
-                            `).join('');
+                            `}).join('');
                         } catch (error) {
                             console.error('Error loading patient history:', error);
                             this.showAlert('Error loading patient history', 'danger');
@@ -851,7 +944,11 @@ public class HealthcareWebApp2 {
                             const result = await response.json();
 
                             if (response.ok && result.success) {
-                                this.showAlert(`Patient registered successfully! Patient ID: ${result.patientId}, Token: #${result.token}`, 'success');
+                                const alertType = result.isReturningPatient ? 'warning' : 'success';
+                                const badgeClass = result.isReturningPatient ? 'returning-patient-badge' : 'new-patient-badge';
+                                const statusText = result.isReturningPatient ? 'RETURNING PATIENT' : 'NEW PATIENT';
+                                
+                                this.showAlert(`${result.message} <br><strong>Patient ID:</strong> ${result.patientId} <br><strong>Token:</strong> #${result.token} <br><span class="${badgeClass}">${statusText}</span>`, alertType);
                                 this.clearForm();
                                 this.loadNextToken();
                                 if (this.phoneField.value.length === 10) {
@@ -926,6 +1023,7 @@ public class HealthcareWebApp2 {
                         alertDiv.innerHTML = `
                             <i class="fas ${type === 'success' ? 'fa-check-circle' : 
                                            type === 'danger' ? 'fa-exclamation-triangle' : 
+                                           type === 'warning' ? 'fa-user-clock' :
                                            'fa-info-circle'} me-2"></i>
                             ${message}
                             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
@@ -937,13 +1035,13 @@ public class HealthcareWebApp2 {
                             if (alertDiv.parentElement) {
                                 alertDiv.remove();
                             }
-                        }, 5000);
+                        }, 8000);
                     }
                 }
 
                 document.addEventListener('DOMContentLoaded', () => {
                     new HealthcareApp();
-                    console.log('Healthcare Registration System loaded!');
+                    console.log('Healthcare Registration System loaded with Patient ID Reuse Feature!');
                 });
             </script>
         </body>
@@ -969,6 +1067,7 @@ public class HealthcareWebApp2 {
             System.out.println("=".repeat(60));
             System.out.println("Server: http://localhost:5000");
             System.out.println("Database: " + DB_URL);
+            System.out.println("Feature: Patient ID Reuse for Returning Patients");
             System.out.println("Status: All systems operational");
             System.out.println("=".repeat(60));
             System.out.println("Open browser: http://localhost:5000");

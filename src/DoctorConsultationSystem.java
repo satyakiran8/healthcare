@@ -1407,5 +1407,6 @@ public class DoctorConsultationSystem {
                 </body>
                 </html>
                 """;
+
     }
 }
