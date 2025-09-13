@@ -1,4 +1,4 @@
-// Complete Fixed Doctor Consultation System - Final Version with Registration Sync
+// Complete Fixed Doctor Consultation System - Working Medicine Modal Version
 // File: DoctorConsultationSystem.java
 // Port: 5001
 
@@ -320,7 +320,6 @@ public class DoctorConsultationSystem {
             return patients;
         }
 
-        // NEW METHOD: Get next consultation token (same logic as patient registration)
         static Integer getNextTokenForConsultation() {
             String sql = """
                         SELECT CASE 
@@ -341,7 +340,7 @@ public class DoctorConsultationSystem {
                 if (rs.next()) {
                     Integer nextToken = rs.getObject("next_consultation_token", Integer.class);
                     System.out.println("Next token for consultation: " + (nextToken != null ? nextToken : "No pending patients"));
-                    return nextToken; // Can be null if no pending patients
+                    return nextToken;
                 }
             } catch (SQLException e) {
                 System.err.println("Error getting next consultation token: " + e.getMessage());
@@ -449,7 +448,6 @@ public class DoctorConsultationSystem {
             }
         }
 
-        // NEW HANDLER: Get next consultation token for sync with registration system
         static class NextConsultationTokenHandler implements HttpHandler {
             public void handle(HttpExchange exchange) throws IOException {
                 if ("GET".equals(exchange.getRequestMethod())) {
@@ -846,42 +844,6 @@ public class DoctorConsultationSystem {
                             z-index: 1000;
                         }
                 
-                        .timing-options {
-                            margin-top: 10px;
-                            padding: 10px;
-                            border-left: 3px solid var(--primary-color);
-                            background: #f0fdf4;
-                            border-radius: 5px;
-                        }
-                
-                        .timing-section {
-                            margin-bottom: 15px;
-                        }
-                
-                        .timing-section h6 {
-                            color: var(--primary-color);
-                            margin-bottom: 8px;
-                            font-weight: 600;
-                        }
-                
-                        .timing-option {
-                            display: inline-block;
-                            margin-right: 20px;
-                            margin-bottom: 8px;
-                        }
-                
-                        .debug-info {
-                            background: #f8f9fa;
-                            border: 1px solid #dee2e6;
-                            border-radius: 8px;
-                            padding: 15px;
-                            margin: 10px 0;
-                            font-family: monospace;
-                            font-size: 12px;
-                            max-height: 200px;
-                            overflow-y: auto;
-                        }
-                
                         .sync-status {
                             background: rgba(16, 185, 129, 0.1);
                             border: 1px solid var(--success-color);
@@ -889,6 +851,37 @@ public class DoctorConsultationSystem {
                             padding: 10px;
                             margin: 10px 0;
                             font-size: 0.9rem;
+                        }
+                
+                        .medicine-list-item {
+                            cursor: pointer;
+                            transition: all 0.3s ease;
+                        }
+                
+                        .medicine-list-item:hover {
+                            background-color: #f8fafc;
+                        }
+                
+                        .modal-content {
+                            border-radius: 15px;
+                            border: none;
+                            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+                        }
+                
+                        .modal-header {
+                            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+                            color: white;
+                            border-radius: 15px 15px 0 0;
+                        }
+                
+                        .selected-medicines-display {
+                            max-height: 400px;
+                            overflow-y: auto;
+                        }
+                
+                        .form-check-input:checked {
+                            background-color: var(--primary-color);
+                            border-color: var(--primary-color);
                         }
                     </style>
                 </head>
@@ -939,7 +932,13 @@ public class DoctorConsultationSystem {
                 
                                                 <div class="mb-4">
                                                     <h5><i class="fas fa-pills me-2"></i>Medicines</h5>
-                                                    <div id="medicinesSection"></div>
+                                                    <div class="d-flex align-items-center gap-3 mb-3">
+                                                        <button type="button" class="btn btn-outline-primary" id="addMedicineBtn">
+                                                            <i class="fas fa-plus me-2"></i>Add Medicine
+                                                        </button>
+                                                        <span class="text-muted">Click to add medicines from list or enter custom</span>
+                                                    </div>
+                                                    <div id="selectedMedicinesContainer"></div>
                                                 </div>
                 
                                                 <div class="mb-4">
@@ -999,12 +998,63 @@ public class DoctorConsultationSystem {
                         </div>
                     </div>
                 
+                    <!-- Medicine Selection Modal -->
+                    <div class="modal fade" id="medicineModal" tabindex="-1">
+                        <div class="modal-dialog modal-lg">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title"><i class="fas fa-pills me-2"></i>Select Medicines</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <!-- Search Bar -->
+                                    <div class="mb-3">
+                                        <input type="text" class="form-control" id="medicineSearch" placeholder="Search medicines...">
+                                    </div>
+                                    
+                                    <!-- Medicine List -->
+                                    <div class="row mb-4">
+                                        <div class="col-12">
+                                            <h6>Available Medicines:</h6>
+                                            <div id="medicineList" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
+                                                <!-- Medicine items will be populated here -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Custom Medicine Input -->
+                                    <div class="mb-3">
+                                        <h6>Add Custom Medicine:</h6>
+                                        <div class="d-flex gap-2">
+                                            <input type="text" class="form-control" id="customMedicine" placeholder="Enter medicine name...">
+                                            <button type="button" class="btn btn-outline-primary" id="addCustomMedicineBtn">
+                                                <i class="fas fa-plus"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Selected Medicines Preview -->
+                                    <div id="modalSelectedMedicines">
+                                        <h6>Selected Medicines:</h6>
+                                        <div id="modalMedicinesList" class="selected-medicines-display"></div>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-primary" id="confirmMedicinesBtn">Confirm Selection</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                
                     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
                     <script>
                         class DoctorApp {
                             constructor() {
                                 this.selectedPatient = null;
                                 this.currentPendingPatients = [];
+                                this.selectedMedicines = new Map(); // Store medicines with their timings
+                                this.tempSelectedMedicines = new Map(); // Temporary storage for modal
                                 this.defaultMedicines = [
                                     { name: 'Paracetamol 500mg', id: 'med1' },
                                     { name: 'Amoxicillin 250mg', id: 'med2' },
@@ -1015,14 +1065,20 @@ public class DoctorConsultationSystem {
                                     { name: 'Omeprazole 20mg', id: 'med7' },
                                     { name: 'Metformin 500mg', id: 'med8' },
                                     { name: 'Aspirin 75mg', id: 'med9' },
-                                    { name: 'Dolo 650mg', id: 'med10' }
+                                    { name: 'Dolo 650mg', id: 'med10' },
+                                    { name: 'Combiflam', id: 'med11' },
+                                    { name: 'Disprin', id: 'med12' },
+                                    { name: 'Digene', id: 'med13' },
+                                    { name: 'Pantop 40mg', id: 'med14' },
+                                    { name: 'Augmentin 625mg', id: 'med15' }
                                 ];
+                                this.medicineModal = null;
                                 this.initializeApp();
                             }
                 
                             initializeApp() {
                                 this.loadPendingPatients();
-                                this.setupMedicinesSection();
+                                this.setupMedicineModal();
                                 this.attachEventListeners();
                                 // Auto-refresh every 10 seconds
                                 setInterval(() => {
@@ -1038,6 +1094,273 @@ public class DoctorConsultationSystem {
                                     e.preventDefault();
                                     this.saveConsultation();
                                 });
+                
+                                // Medicine modal event listeners
+                                document.getElementById('addMedicineBtn').addEventListener('click', () => {
+                                    this.openMedicineModal();
+                                });
+                
+                                document.getElementById('medicineSearch').addEventListener('input', (e) => {
+                                    this.filterMedicines(e.target.value);
+                                });
+                
+                                document.getElementById('addCustomMedicineBtn').addEventListener('click', () => {
+                                    this.addCustomMedicine();
+                                });
+                
+                                document.getElementById('customMedicine').addEventListener('keypress', (e) => {
+                                    if (e.key === 'Enter') {
+                                        this.addCustomMedicine();
+                                    }
+                                });
+                
+                                document.getElementById('confirmMedicinesBtn').addEventListener('click', () => {
+                                    this.confirmMedicineSelection();
+                                });
+                
+                                // Initialize Bootstrap modal
+                                this.medicineModal = new bootstrap.Modal(document.getElementById('medicineModal'));
+                            }
+                
+                            setupMedicineModal() {
+                                this.populateMedicineList();
+                                this.updateSelectedMedicinesDisplay();
+                            }
+                
+                            populateMedicineList() {
+                                const medicineList = document.getElementById('medicineList');
+                                medicineList.innerHTML = this.defaultMedicines.map(medicine => `
+                                    <div class="medicine-list-item p-2 border-bottom" data-medicine="${medicine.name}">
+                                        <div class="form-check">
+                                            <input class="form-check-input medicine-list-checkbox" type="checkbox" value="${medicine.name}" id="list-${medicine.id}">
+                                            <label class="form-check-label fw-bold" for="list-${medicine.id}">
+                                                ${medicine.name}
+                                            </label>
+                                        </div>
+                                    </div>
+                                `).join('');
+                                
+                                // Attach event listeners after creating the HTML
+                                this.attachMedicineListEventListeners();
+                            }
+                            
+                            attachMedicineListEventListeners() {
+                                document.querySelectorAll('.medicine-list-checkbox').forEach(checkbox => {
+                                    checkbox.addEventListener('change', (e) => {
+                                        if (e.target.checked) {
+                                            this.tempSelectedMedicines.set(e.target.value, {
+                                                name: e.target.value,
+                                                foodTiming: '',
+                                                dayTimings: []
+                                            });
+                                        } else {
+                                            this.tempSelectedMedicines.delete(e.target.value);
+                                        }
+                                        this.updateModalSelectedMedicines();
+                                    });
+                                });
+                            }
+                
+                            filterMedicines(searchTerm) {
+                                const items = document.querySelectorAll('.medicine-list-item');
+                                items.forEach(item => {
+                                    const medicineName = item.dataset.medicine.toLowerCase();
+                                    if (medicineName.includes(searchTerm.toLowerCase())) {
+                                        item.style.display = 'block';
+                                    } else {
+                                        item.style.display = 'none';
+                                    }
+                                });
+                            }
+                
+                            openMedicineModal() {
+                                // Copy current selection to temp storage
+                                this.tempSelectedMedicines = new Map(this.selectedMedicines);
+                                
+                                // Update modal checkboxes based on current selection
+                                document.querySelectorAll('.medicine-list-checkbox').forEach(checkbox => {
+                                    checkbox.checked = this.tempSelectedMedicines.has(checkbox.value);
+                                });
+                
+                                // Clear search and custom input
+                                document.getElementById('medicineSearch').value = '';
+                                document.getElementById('customMedicine').value = '';
+                                this.filterMedicines('');
+                
+                                this.updateModalSelectedMedicines();
+                                this.medicineModal.show();
+                            }
+                
+                            addCustomMedicine() {
+                                const customInput = document.getElementById('customMedicine');
+                                const medicineName = customInput.value.trim();
+                
+                                if (medicineName && !this.tempSelectedMedicines.has(medicineName)) {
+                                    this.tempSelectedMedicines.set(medicineName, {
+                                        name: medicineName,
+                                        foodTiming: '',
+                                        dayTimings: []
+                                    });
+                                    customInput.value = '';
+                                    this.updateModalSelectedMedicines();
+                                }
+                            }
+                
+                            updateModalSelectedMedicines() {
+                                const modalMedicinesList = document.getElementById('modalMedicinesList');
+                                
+                                if (this.tempSelectedMedicines.size === 0) {
+                                    modalMedicinesList.innerHTML = '<p class="text-muted">No medicines selected</p>';
+                                    return;
+                                }
+                
+                                modalMedicinesList.innerHTML = Array.from(this.tempSelectedMedicines.entries()).map(([name, data]) => {
+                                    const medicineId = name.replace(/[^a-zA-Z0-9]/g, '');
+                                    return `
+                                        <div class="card mb-2" data-medicine-name="${name}">
+                                            <div class="card-body p-3">
+                                                <div class="d-flex justify-content-between align-items-start">
+                                                    <h6 class="mb-2">${name}</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="doctorApp.removeMedicineFromTemp('${name}')">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </div>
+                                                
+                                                <div class="row">
+                                                    <div class="col-md-6">
+                                                        <small class="fw-bold text-primary">Food Timing:</small>
+                                                        <div class="mt-1">
+                                                            <div class="form-check form-check-inline">
+                                                                <input class="form-check-input food-timing-radio" type="radio" name="food-${medicineId}" id="before-${medicineId}" value="Before Food" 
+                                                                    ${data.foodTiming === 'Before Food' ? 'checked' : ''}>
+                                                                <label class="form-check-label small" for="before-${medicineId}">Before Food</label>
+                                                            </div>
+                                                            <div class="form-check form-check-inline">
+                                                                <input class="form-check-input food-timing-radio" type="radio" name="food-${medicineId}" id="after-${medicineId}" value="After Food" 
+                                                                    ${data.foodTiming === 'After Food' ? 'checked' : ''}>
+                                                                <label class="form-check-label small" for="after-${medicineId}">After Food</label>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div class="col-md-6">
+                                                        <small class="fw-bold text-primary">Day Timing:</small>
+                                                        <div class="mt-1">
+                                                            ${['Morning', 'Afternoon', 'Evening', 'Night'].map(time => `
+                                                                <div class="form-check form-check-inline">
+                                                                    <input class="form-check-input day-timing-checkbox" type="checkbox" id="${time}-${medicineId}" value="${time}" 
+                                                                        ${data.dayTimings.includes(time) ? 'checked' : ''}>
+                                                                    <label class="form-check-label small" for="${time}-${medicineId}">${time}</label>
+                                                                </div>
+                                                            `).join('')}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('');
+                                
+                                // Attach event listeners to timing controls
+                                this.attachTimingEventListeners();
+                            }
+                            
+                            attachTimingEventListeners() {
+                                // Food timing radio buttons
+                                document.querySelectorAll('.food-timing-radio').forEach(radio => {
+                                    radio.addEventListener('change', (e) => {
+                                        const medicineCard = e.target.closest('[data-medicine-name]');
+                                        const medicineName = medicineCard.getAttribute('data-medicine-name');
+                                        this.updateMedicineTiming(medicineName, 'food', e.target.value);
+                                    });
+                                });
+                                
+                                // Day timing checkboxes
+                                document.querySelectorAll('.day-timing-checkbox').forEach(checkbox => {
+                                    checkbox.addEventListener('change', (e) => {
+                                        const medicineCard = e.target.closest('[data-medicine-name]');
+                                        const medicineName = medicineCard.getAttribute('data-medicine-name');
+                                        this.updateMedicineTiming(medicineName, 'day', e.target.value, e.target.checked);
+                                    });
+                                });
+                            }
+                
+                            removeMedicineFromTemp(medicineName) {
+                                this.tempSelectedMedicines.delete(medicineName);
+                                // Uncheck if it's in the list
+                                const checkbox = document.querySelector(`input[value="${medicineName}"]`);
+                                if (checkbox) checkbox.checked = false;
+                                this.updateModalSelectedMedicines();
+                            }
+                
+                            updateMedicineTiming(medicineName, timingType, value, checked = true) {
+                                if (this.tempSelectedMedicines.has(medicineName)) {
+                                    const medicineData = this.tempSelectedMedicines.get(medicineName);
+                                    
+                                    if (timingType === 'food') {
+                                        medicineData.foodTiming = value;
+                                    } else if (timingType === 'day') {
+                                        if (checked) {
+                                            if (!medicineData.dayTimings.includes(value)) {
+                                                medicineData.dayTimings.push(value);
+                                            }
+                                        } else {
+                                            medicineData.dayTimings = medicineData.dayTimings.filter(t => t !== value);
+                                        }
+                                    }
+                                    
+                                    this.tempSelectedMedicines.set(medicineName, medicineData);
+                                }
+                            }
+                
+                            confirmMedicineSelection() {
+                                // Copy temp selection to actual selection
+                                this.selectedMedicines = new Map(this.tempSelectedMedicines);
+                                this.updateSelectedMedicinesDisplay();
+                                this.medicineModal.hide();
+                            }
+                
+                            updateSelectedMedicinesDisplay() {
+                                const container = document.getElementById('selectedMedicinesContainer');
+                                
+                                if (this.selectedMedicines.size === 0) {
+                                    container.innerHTML = '<p class="text-muted">No medicines selected</p>';
+                                    return;
+                                }
+                
+                                container.innerHTML = `
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <small class="fw-bold text-primary">Selected Medicines (${this.selectedMedicines.size})</small>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="doctorApp.openMedicineModal()">
+                                                <i class="fas fa-edit me-1"></i>Edit
+                                            </button>
+                                        </div>
+                                        ${Array.from(this.selectedMedicines.entries()).map(([name, data]) => {
+                                            const allTimings = [];
+                                            if (data.foodTiming) allTimings.push(data.foodTiming);
+                                            allTimings.push(...data.dayTimings);
+                                            const timingStr = allTimings.length > 0 ? allTimings.join(', ') : 'As needed';
+                                            
+                                            return `
+                                                <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+                                                    <div>
+                                                        <span class="fw-bold">${name}</span>
+                                                        <br><small class="text-muted">${timingStr}</small>
+                                                    </div>
+                                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="doctorApp.removeMedicine('${name}')">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                `;
+                            }
+                
+                            removeMedicine(medicineName) {
+                                this.selectedMedicines.delete(medicineName);
+                                this.updateSelectedMedicinesDisplay();
                             }
                 
                             async updateConsultationToken() {
@@ -1172,62 +1495,6 @@ public class DoctorConsultationSystem {
                                 }
                             }
                 
-                            setupMedicinesSection() {
-                                const medicinesSection = document.getElementById('medicinesSection');
-                                medicinesSection.innerHTML = this.defaultMedicines.map(medicine => `
-                                    <div class="medicine-item">
-                                        <div class="form-check">
-                                            <input class="form-check-input medicine-checkbox" type="checkbox" value="${medicine.name}" id="${medicine.id}">
-                                            <label class="form-check-label" for="${medicine.id}">
-                                                <strong>${medicine.name}</strong>
-                                            </label>
-                                        </div>
-                                        <div class="timing-options" id="timing-${medicine.id}" style="display: none;">
-                                            <div class="timing-section">
-                                                <h6>Food Timing:</h6>
-                                                <div class="timing-option">
-                                                    <input class="form-check-input" type="radio" name="food-${medicine.id}" id="before-${medicine.id}" value="Before Food">
-                                                    <label class="form-check-label" for="before-${medicine.id}">Before Food</label>
-                                                </div>
-                                                <div class="timing-option">
-                                                    <input class="form-check-input" type="radio" name="food-${medicine.id}" id="after-${medicine.id}" value="After Food">
-                                                    <label class="form-check-label" for="after-${medicine.id}">After Food</label>
-                                                </div>
-                                            </div>
-                                            <div class="timing-section">
-                                                <h6>Day Timing:</h6>
-                                                <div class="timing-option">
-                                                    <input class="form-check-input" type="checkbox" name="day-${medicine.id}" id="morning-${medicine.id}" value="Morning">
-                                                    <label class="form-check-label" for="morning-${medicine.id}">Morning</label>
-                                                </div>
-                                                <div class="timing-option">
-                                                    <input class="form-check-input" type="checkbox" name="day-${medicine.id}" id="afternoon-${medicine.id}" value="Afternoon">
-                                                    <label class="form-check-label" for="afternoon-${medicine.id}">Afternoon</label>
-                                                </div>
-                                                <div class="timing-option">
-                                                    <input class="form-check-input" type="checkbox" name="day-${medicine.id}" id="evening-${medicine.id}" value="Evening">
-                                                    <label class="form-check-label" for="evening-${medicine.id}">Evening</label>
-                                                </div>
-                                                <div class="timing-option">
-                                                    <input class="form-check-input" type="checkbox" name="day-${medicine.id}" id="night-${medicine.id}" value="Night">
-                                                    <label class="form-check-label" for="night-${medicine.id}">Night</label>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `).join('');
-                
-                                document.querySelectorAll('.medicine-checkbox').forEach(checkbox => {
-                                    checkbox.addEventListener('change', (e) => {
-                                        const timingDiv = document.getElementById(`timing-${e.target.id}`);
-                                        timingDiv.style.display = e.target.checked ? 'block' : 'none';
-                                        if (!e.target.checked) {
-                                            timingDiv.querySelectorAll('input').forEach(cb => cb.checked = false);
-                                        }
-                                    });
-                                });
-                            }
-                
                             async loadPatientHistory(patientId) {
                                 try {
                                     const response = await fetch(`/api/consultation-history/${patientId}`);
@@ -1301,20 +1568,14 @@ public class DoctorConsultationSystem {
                                 saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Saving...';
                 
                                 try {
+                                    // Get selected medicines from the new system
                                     const selectedMedicines = [];
-                                    document.querySelectorAll('.medicine-checkbox:checked').forEach(checkbox => {
-                                        const medicineId = checkbox.id;
-                                        const medicineName = checkbox.value;
-                                        const foodTiming = document.querySelector(`input[name="food-${medicineId}"]:checked`);
-                                        const dayTimings = [];
-                                        document.querySelectorAll(`input[name="day-${medicineId}"]:checked`).forEach(cb => {
-                                            dayTimings.push(cb.value);
-                                        });
+                                    this.selectedMedicines.forEach((data, name) => {
                                         const allTimings = [];
-                                        if (foodTiming) allTimings.push(foodTiming.value);
-                                        allTimings.push(...dayTimings);
+                                        if (data.foodTiming) allTimings.push(data.foodTiming);
+                                        allTimings.push(...data.dayTimings);
                                         const timingStr = allTimings.length > 0 ? allTimings.join(', ') : 'As needed';
-                                        selectedMedicines.push({ name: medicineName, timing: timingStr });
+                                        selectedMedicines.push({ name: name, timing: timingStr });
                                     });
                 
                                     const selectedTests = [];
@@ -1326,6 +1587,8 @@ public class DoctorConsultationSystem {
                 
                                     if (selectedMedicines.length === 0 && selectedTests.length === 0) {
                                         this.showAlert('Please select at least one medicine or test', 'warning');
+                                        saveBtn.disabled = false;
+                                        saveBtn.innerHTML = '<i class="fas fa-check-circle me-2"></i>Complete Consultation';
                                         return;
                                     }
                 
@@ -1372,13 +1635,10 @@ public class DoctorConsultationSystem {
                 
                             resetForm() {
                                 document.getElementById('doctorForm').reset();
-                                document.querySelectorAll('.timing-options').forEach(div => {
-                                    div.style.display = 'none';
-                                    div.querySelectorAll('input').forEach(cb => cb.checked = false);
-                                });
-                                document.querySelectorAll('.medicine-checkbox').forEach(cb => cb.checked = false);
                                 document.querySelectorAll('#testsSection input[type="checkbox"]').forEach(cb => cb.checked = false);
                                 document.getElementById('nextVisitDays').value = '';
+                                this.selectedMedicines.clear();
+                                this.updateSelectedMedicinesDisplay();
                             }
                 
                             completeReset() {
@@ -1405,10 +1665,12 @@ public class DoctorConsultationSystem {
                             }
                         }
                 
+                        // Global function to expose app methods to onclick handlers
                         let doctorApp;
+                        
                         document.addEventListener('DOMContentLoaded', () => {
                             doctorApp = new DoctorApp();
-                            console.log('Doctor Consultation System with Registration Sync loaded successfully!');
+                            console.log('Doctor Consultation System with Fixed Medicine Modal loaded successfully!');
                         });
                     </script>
                 </body>
