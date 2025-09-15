@@ -1,4 +1,4 @@
-// Complete Fixed Doctor Consultation System - Working Medicine Modal Version
+// Complete Fixed Doctor Consultation System - Working Medicine & Tests Modal Version
 // File: DoctorConsultationSystem.java
 // Port: 5001
 
@@ -853,12 +853,12 @@ public class DoctorConsultationSystem {
                             font-size: 0.9rem;
                         }
                 
-                        .medicine-list-item {
+                        .medicine-list-item, .test-list-item {
                             cursor: pointer;
                             transition: all 0.3s ease;
                         }
                 
-                        .medicine-list-item:hover {
+                        .medicine-list-item:hover, .test-list-item:hover {
                             background-color: #f8fafc;
                         }
                 
@@ -874,7 +874,7 @@ public class DoctorConsultationSystem {
                             border-radius: 15px 15px 0 0;
                         }
                 
-                        .selected-medicines-display {
+                        .selected-medicines-display, .selected-tests-display {
                             max-height: 400px;
                             overflow-y: auto;
                         }
@@ -943,36 +943,13 @@ public class DoctorConsultationSystem {
                 
                                                 <div class="mb-4">
                                                     <h5><i class="fas fa-vial me-2"></i>Tests</h5>
-                                                    <div id="testsSection">
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="Blood Test" id="test1">
-                                                            <label class="form-check-label" for="test1">Blood Test</label>
-                                                        </div>
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="X-Ray" id="test2">
-                                                            <label class="form-check-label" for="test2">X-Ray</label>
-                                                        </div>
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="ECG" id="test3">
-                                                            <label class="form-check-label" for="test3">ECG</label>
-                                                        </div>
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="Urine Test" id="test4">
-                                                            <label class="form-check-label" for="test4">Urine Test</label>
-                                                        </div>
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="CT Scan" id="test5">
-                                                            <label class="form-check-label" for="test5">CT Scan</label>
-                                                        </div>
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="MRI Scan" id="test6">
-                                                            <label class="form-check-label" for="test6">MRI Scan</label>
-                                                        </div>
-                                                        <div class="form-check mb-2">
-                                                            <input class="form-check-input" type="checkbox" value="Ultrasound" id="test7">
-                                                            <label class="form-check-label" for="test7">Ultrasound</label>
-                                                        </div>
+                                                    <div class="d-flex align-items-center gap-3 mb-3">
+                                                        <button type="button" class="btn btn-outline-primary" id="addTestBtn">
+                                                            <i class="fas fa-plus me-2"></i>Add Test
+                                                        </button>
+                                                        <span class="text-muted">Click to add tests from list or enter custom</span>
                                                     </div>
+                                                    <div id="selectedTestsContainer"></div>
                                                 </div>
                 
                                                 <div class="mb-4">
@@ -1047,6 +1024,55 @@ public class DoctorConsultationSystem {
                         </div>
                     </div>
                 
+                    <!-- Tests Selection Modal -->
+                    <div class="modal fade" id="testsModal" tabindex="-1">
+                        <div class="modal-dialog modal-lg">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title"><i class="fas fa-vial me-2"></i>Select Tests</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <!-- Search Bar -->
+                                    <div class="mb-3">
+                                        <input type="text" class="form-control" id="testSearch" placeholder="Search tests...">
+                                    </div>
+                                    
+                                    <!-- Test List -->
+                                    <div class="row mb-4">
+                                        <div class="col-12">
+                                            <h6>Available Tests:</h6>
+                                            <div id="testList" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
+                                                <!-- Test items will be populated here -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Custom Test Input -->
+                                    <div class="mb-3">
+                                        <h6>Add Custom Test:</h6>
+                                        <div class="d-flex gap-2">
+                                            <input type="text" class="form-control" id="customTest" placeholder="Enter test name...">
+                                            <button type="button" class="btn btn-outline-primary" id="addCustomTestBtn">
+                                                <i class="fas fa-plus"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Selected Tests Preview -->
+                                    <div id="modalSelectedTests">
+                                        <h6>Selected Tests:</h6>
+                                        <div id="modalTestsList" class="selected-tests-display"></div>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="button" class="btn btn-primary" id="confirmTestsBtn">Confirm Selection</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                
                     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
                     <script>
                         class DoctorApp {
@@ -1055,6 +1081,9 @@ public class DoctorConsultationSystem {
                                 this.currentPendingPatients = [];
                                 this.selectedMedicines = new Map(); // Store medicines with their timings
                                 this.tempSelectedMedicines = new Map(); // Temporary storage for modal
+                                this.selectedTests = new Set(); // Store selected tests
+                                this.tempSelectedTests = new Set(); // Temporary storage for tests modal
+                                
                                 this.defaultMedicines = [
                                     { name: 'Paracetamol 500mg', id: 'med1' },
                                     { name: 'Amoxicillin 250mg', id: 'med2' },
@@ -1072,13 +1101,34 @@ public class DoctorConsultationSystem {
                                     { name: 'Pantop 40mg', id: 'med14' },
                                     { name: 'Augmentin 625mg', id: 'med15' }
                                 ];
+                                
+                                this.defaultTests = [
+                                    { name: 'Blood Test', id: 'test1' },
+                                    { name: 'X-Ray', id: 'test2' },
+                                    { name: 'ECG', id: 'test3' },
+                                    { name: 'Urine Test', id: 'test4' },
+                                    { name: 'CT Scan', id: 'test5' },
+                                    { name: 'MRI Scan', id: 'test6' },
+                                    { name: 'Ultrasound', id: 'test7' },
+                                    { name: 'Blood Sugar Test', id: 'test8' },
+                                    { name: 'Thyroid Function Test', id: 'test9' },
+                                    { name: 'Liver Function Test', id: 'test10' },
+                                    { name: 'Kidney Function Test', id: 'test11' },
+                                    { name: 'Lipid Profile', id: 'test12' },
+                                    { name: 'Hemoglobin Test', id: 'test13' },
+                                    { name: 'Chest X-Ray', id: 'test14' },
+                                    { name: 'Stress Test', id: 'test15' }
+                                ];
+                                
                                 this.medicineModal = null;
+                                this.testsModal = null;
                                 this.initializeApp();
                             }
                 
                             initializeApp() {
                                 this.loadPendingPatients();
                                 this.setupMedicineModal();
+                                this.setupTestsModal();
                                 this.attachEventListeners();
                                 // Auto-refresh every 10 seconds
                                 setInterval(() => {
@@ -1117,14 +1167,43 @@ public class DoctorConsultationSystem {
                                 document.getElementById('confirmMedicinesBtn').addEventListener('click', () => {
                                     this.confirmMedicineSelection();
                                 });
+                                
+                                // Tests modal event listeners
+                                document.getElementById('addTestBtn').addEventListener('click', () => {
+                                    this.openTestsModal();
+                                });
                 
-                                // Initialize Bootstrap modal
+                                document.getElementById('testSearch').addEventListener('input', (e) => {
+                                    this.filterTests(e.target.value);
+                                });
+                
+                                document.getElementById('addCustomTestBtn').addEventListener('click', () => {
+                                    this.addCustomTest();
+                                });
+                
+                                document.getElementById('customTest').addEventListener('keypress', (e) => {
+                                    if (e.key === 'Enter') {
+                                        this.addCustomTest();
+                                    }
+                                });
+                
+                                document.getElementById('confirmTestsBtn').addEventListener('click', () => {
+                                    this.confirmTestSelection();
+                                });
+                
+                                // Initialize Bootstrap modals
                                 this.medicineModal = new bootstrap.Modal(document.getElementById('medicineModal'));
+                                this.testsModal = new bootstrap.Modal(document.getElementById('testsModal'));
                             }
                 
                             setupMedicineModal() {
                                 this.populateMedicineList();
                                 this.updateSelectedMedicinesDisplay();
+                            }
+                            
+                            setupTestsModal() {
+                                this.populateTestList();
+                                this.updateSelectedTestsDisplay();
                             }
                 
                             populateMedicineList() {
@@ -1144,6 +1223,23 @@ public class DoctorConsultationSystem {
                                 this.attachMedicineListEventListeners();
                             }
                             
+                            populateTestList() {
+                                const testList = document.getElementById('testList');
+                                testList.innerHTML = this.defaultTests.map(test => `
+                                    <div class="test-list-item p-2 border-bottom" data-test="${test.name}">
+                                        <div class="form-check">
+                                            <input class="form-check-input test-list-checkbox" type="checkbox" value="${test.name}" id="list-${test.id}">
+                                            <label class="form-check-label fw-bold" for="list-${test.id}">
+                                                ${test.name}
+                                            </label>
+                                        </div>
+                                    </div>
+                                `).join('');
+                                
+                                // Attach event listeners after creating the HTML
+                                this.attachTestListEventListeners();
+                            }
+                            
                             attachMedicineListEventListeners() {
                                 document.querySelectorAll('.medicine-list-checkbox').forEach(checkbox => {
                                     checkbox.addEventListener('change', (e) => {
@@ -1160,12 +1256,37 @@ public class DoctorConsultationSystem {
                                     });
                                 });
                             }
+                            
+                            attachTestListEventListeners() {
+                                document.querySelectorAll('.test-list-checkbox').forEach(checkbox => {
+                                    checkbox.addEventListener('change', (e) => {
+                                        if (e.target.checked) {
+                                            this.tempSelectedTests.add(e.target.value);
+                                        } else {
+                                            this.tempSelectedTests.delete(e.target.value);
+                                        }
+                                        this.updateModalSelectedTests();
+                                    });
+                                });
+                            }
                 
                             filterMedicines(searchTerm) {
                                 const items = document.querySelectorAll('.medicine-list-item');
                                 items.forEach(item => {
                                     const medicineName = item.dataset.medicine.toLowerCase();
                                     if (medicineName.includes(searchTerm.toLowerCase())) {
+                                        item.style.display = 'block';
+                                    } else {
+                                        item.style.display = 'none';
+                                    }
+                                });
+                            }
+                            
+                            filterTests(searchTerm) {
+                                const items = document.querySelectorAll('.test-list-item');
+                                items.forEach(item => {
+                                    const testName = item.dataset.test.toLowerCase();
+                                    if (testName.includes(searchTerm.toLowerCase())) {
                                         item.style.display = 'block';
                                     } else {
                                         item.style.display = 'none';
@@ -1190,6 +1311,24 @@ public class DoctorConsultationSystem {
                                 this.updateModalSelectedMedicines();
                                 this.medicineModal.show();
                             }
+                            
+                            openTestsModal() {
+                                // Copy current selection to temp storage
+                                this.tempSelectedTests = new Set(this.selectedTests);
+                                
+                                // Update modal checkboxes based on current selection
+                                document.querySelectorAll('.test-list-checkbox').forEach(checkbox => {
+                                    checkbox.checked = this.tempSelectedTests.has(checkbox.value);
+                                });
+                
+                                // Clear search and custom input
+                                document.getElementById('testSearch').value = '';
+                                document.getElementById('customTest').value = '';
+                                this.filterTests('');
+                
+                                this.updateModalSelectedTests();
+                                this.testsModal.show();
+                            }
                 
                             addCustomMedicine() {
                                 const customInput = document.getElementById('customMedicine');
@@ -1203,6 +1342,17 @@ public class DoctorConsultationSystem {
                                     });
                                     customInput.value = '';
                                     this.updateModalSelectedMedicines();
+                                }
+                            }
+                            
+                            addCustomTest() {
+                                const customInput = document.getElementById('customTest');
+                                const testName = customInput.value.trim();
+                
+                                if (testName && !this.tempSelectedTests.has(testName)) {
+                                    this.tempSelectedTests.add(testName);
+                                    customInput.value = '';
+                                    this.updateModalSelectedTests();
                                 }
                             }
                 
@@ -1265,6 +1415,28 @@ public class DoctorConsultationSystem {
                                 this.attachTimingEventListeners();
                             }
                             
+                            updateModalSelectedTests() {
+                                const modalTestsList = document.getElementById('modalTestsList');
+                                
+                                if (this.tempSelectedTests.size === 0) {
+                                    modalTestsList.innerHTML = '<p class="text-muted">No tests selected</p>';
+                                    return;
+                                }
+                
+                                modalTestsList.innerHTML = Array.from(this.tempSelectedTests).map(testName => `
+                                    <div class="card mb-2">
+                                        <div class="card-body p-3">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <h6 class="mb-0">${testName}</h6>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="doctorApp.removeTestFromTemp('${testName}')">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('');
+                            }
+                            
                             attachTimingEventListeners() {
                                 // Food timing radio buttons
                                 document.querySelectorAll('.food-timing-radio').forEach(radio => {
@@ -1292,6 +1464,14 @@ public class DoctorConsultationSystem {
                                 if (checkbox) checkbox.checked = false;
                                 this.updateModalSelectedMedicines();
                             }
+                            
+                            removeTestFromTemp(testName) {
+                                this.tempSelectedTests.delete(testName);
+                                // Uncheck if it's in the list
+                                const checkbox = document.querySelector(`input[value="${testName}"]`);
+                                if (checkbox) checkbox.checked = false;
+                                this.updateModalSelectedTests();
+                            }
                 
                             updateMedicineTiming(medicineName, timingType, value, checked = true) {
                                 if (this.tempSelectedMedicines.has(medicineName)) {
@@ -1318,6 +1498,13 @@ public class DoctorConsultationSystem {
                                 this.selectedMedicines = new Map(this.tempSelectedMedicines);
                                 this.updateSelectedMedicinesDisplay();
                                 this.medicineModal.hide();
+                            }
+                            
+                            confirmTestSelection() {
+                                // Copy temp selection to actual selection
+                                this.selectedTests = new Set(this.tempSelectedTests);
+                                this.updateSelectedTestsDisplay();
+                                this.testsModal.hide();
                             }
                 
                             updateSelectedMedicinesDisplay() {
@@ -1357,10 +1544,43 @@ public class DoctorConsultationSystem {
                                     </div>
                                 `;
                             }
+                            
+                            updateSelectedTestsDisplay() {
+                                const container = document.getElementById('selectedTestsContainer');
+                                
+                                if (this.selectedTests.size === 0) {
+                                    container.innerHTML = '<p class="text-muted">No tests selected</p>';
+                                    return;
+                                }
+                
+                                container.innerHTML = `
+                                    <div class="border rounded p-3">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <small class="fw-bold text-primary">Selected Tests (${this.selectedTests.size})</small>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="doctorApp.openTestsModal()">
+                                                <i class="fas fa-edit me-1"></i>Edit
+                                            </button>
+                                        </div>
+                                        ${Array.from(this.selectedTests).map(testName => `
+                                            <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+                                                <span class="fw-bold">${testName}</span>
+                                                <button type="button" class="btn btn-sm btn-outline-danger" onclick="doctorApp.removeTest('${testName}')">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                `;
+                            }
                 
                             removeMedicine(medicineName) {
                                 this.selectedMedicines.delete(medicineName);
                                 this.updateSelectedMedicinesDisplay();
+                            }
+                            
+                            removeTest(testName) {
+                                this.selectedTests.delete(testName);
+                                this.updateSelectedTestsDisplay();
                             }
                 
                             async updateConsultationToken() {
@@ -1578,10 +1798,8 @@ public class DoctorConsultationSystem {
                                         selectedMedicines.push({ name: name, timing: timingStr });
                                     });
                 
-                                    const selectedTests = [];
-                                    document.querySelectorAll('#testsSection input[type="checkbox"]:checked').forEach(checkbox => {
-                                        selectedTests.push(checkbox.value);
-                                    });
+                                    // Get selected tests from the new system
+                                    const selectedTests = Array.from(this.selectedTests);
                 
                                     const nextVisitDays = document.getElementById('nextVisitDays').value;
                 
@@ -1635,10 +1853,11 @@ public class DoctorConsultationSystem {
                 
                             resetForm() {
                                 document.getElementById('doctorForm').reset();
-                                document.querySelectorAll('#testsSection input[type="checkbox"]').forEach(cb => cb.checked = false);
                                 document.getElementById('nextVisitDays').value = '';
                                 this.selectedMedicines.clear();
+                                this.selectedTests.clear();
                                 this.updateSelectedMedicinesDisplay();
+                                this.updateSelectedTestsDisplay();
                             }
                 
                             completeReset() {
@@ -1670,7 +1889,7 @@ public class DoctorConsultationSystem {
                         
                         document.addEventListener('DOMContentLoaded', () => {
                             doctorApp = new DoctorApp();
-                            console.log('Doctor Consultation System with Fixed Medicine Modal loaded successfully!');
+                            console.log('Doctor Consultation System with Medicine & Tests Modal loaded successfully!');
                         });
                     </script>
                 </body>
