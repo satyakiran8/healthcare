@@ -1,6 +1,6 @@
-// Complete Pharmacy Management System
+// Complete Fixed Pharmacy Management System
 // File: PharmacyWebApp.java
-// Displays completed consultations and manages medicine dispensing
+// Fixed to properly display all prescription details
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
@@ -11,7 +11,7 @@ import java.sql.*;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.time.LocalDateTime;
-import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.nio.charset.StandardCharsets;
 import java.net.URLDecoder;
 import java.net.BindException;
@@ -30,12 +30,11 @@ public class PharmacyWebApp {
     static class PharmacyRecord {
         private Long id;
         private String patientId;
-        private String patientName;
+        private String issue;
         private String medicines;
         private String tests;
-        private Integer token;
-        private LocalDateTime consultationTime;
-        private String consultationStatus;
+        private String nextVisitDays;
+        private LocalDateTime createdTime;
         private String pharmacyStatus;
         private LocalDateTime pharmacyCompletedTime;
 
@@ -60,12 +59,12 @@ public class PharmacyWebApp {
             this.patientId = patientId;
         }
 
-        public String getPatientName() {
-            return patientName;
+        public String getIssue() {
+            return issue;
         }
 
-        public void setPatientName(String patientName) {
-            this.patientName = patientName;
+        public void setIssue(String issue) {
+            this.issue = issue;
         }
 
         public String getMedicines() {
@@ -84,28 +83,20 @@ public class PharmacyWebApp {
             this.tests = tests;
         }
 
-        public Integer getToken() {
-            return token;
+        public String getNextVisitDays() {
+            return nextVisitDays;
         }
 
-        public void setToken(Integer token) {
-            this.token = token;
+        public void setNextVisitDays(String nextVisitDays) {
+            this.nextVisitDays = nextVisitDays;
         }
 
-        public LocalDateTime getConsultationTime() {
-            return consultationTime;
+        public LocalDateTime getCreatedTime() {
+            return createdTime;
         }
 
-        public void setConsultationTime(LocalDateTime consultationTime) {
-            this.consultationTime = consultationTime;
-        }
-
-        public String getConsultationStatus() {
-            return consultationStatus;
-        }
-
-        public void setConsultationStatus(String consultationStatus) {
-            this.consultationStatus = consultationStatus;
+        public void setCreatedTime(LocalDateTime createdTime) {
+            this.createdTime = createdTime;
         }
 
         public String getPharmacyStatus() {
@@ -126,18 +117,18 @@ public class PharmacyWebApp {
 
         public String toJson() {
             return String.format(
-                    "{\"id\":%d,\"patientId\":\"%s\",\"patientName\":\"%s\",\"medicines\":\"%s\"," +
-                            "\"tests\":\"%s\",\"token\":%d,\"consultationTime\":\"%s\"," +
-                            "\"consultationStatus\":\"%s\",\"pharmacyStatus\":\"%s\"}",
+                    "{\"id\":%d,\"patientId\":\"%s\",\"issue\":\"%s\",\"medicines\":\"%s\"," +
+                            "\"tests\":\"%s\",\"nextVisitDays\":\"%s\",\"createdTime\":\"%s\"," +
+                            "\"pharmacyStatus\":\"%s\",\"pharmacyCompletedTime\":\"%s\"}",
                     id != null ? id : 0,
                     escapeJson(patientId),
-                    escapeJson(patientName),
+                    escapeJson(issue),
                     escapeJson(medicines),
                     escapeJson(tests),
-                    token != null ? token : 0,
-                    consultationTime != null ? consultationTime.toString() : "",
-                    escapeJson(consultationStatus),
-                    escapeJson(pharmacyStatus)
+                    escapeJson(nextVisitDays),
+                    createdTime != null ? createdTime.toString() : "",
+                    escapeJson(pharmacyStatus),
+                    pharmacyCompletedTime != null ? pharmacyCompletedTime.toString() : ""
             );
         }
     }
@@ -183,8 +174,8 @@ public class PharmacyWebApp {
                 }
                 columns.close();
 
-                // Update existing completed consultations to have pharmacy_status = 'pending'
-                stmt.execute("UPDATE doctors SET pharmacy_status = 'pending' WHERE consultation_status = 'completed' AND pharmacy_status IS NULL");
+                // Update existing records to have pharmacy_status = 'pending' where medicines are prescribed
+                stmt.execute("UPDATE doctors SET pharmacy_status = 'pending' WHERE medicines IS NOT NULL AND medicines != '' AND medicines != 'N/A' AND pharmacy_status IS NULL");
 
             } catch (SQLException e) {
                 System.err.println("✗ Error ensuring pharmacy columns: " + e.getMessage());
@@ -192,37 +183,51 @@ public class PharmacyWebApp {
         }
 
         /**
-         * Get all completed consultations that are pending pharmacy processing
+         * Get all records that have medicines prescribed and are pending pharmacy processing
          */
         static List<PharmacyRecord> getPendingPharmacyRecords() {
             List<PharmacyRecord> records = new ArrayList<>();
             String sql = """
-                    SELECT id, patient_id, patient_name, medicines, tests, token, 
-                           consultation_time, consultation_status, pharmacy_status
+                    SELECT id, patient_id, issue, medicines, tests, next_visit_days,
+                           created_time, 
+                           COALESCE(pharmacy_status, 'pending') as pharmacy_status
                     FROM doctors 
-                    WHERE consultation_status = 'completed' 
+                    WHERE medicines IS NOT NULL 
+                    AND medicines != '' 
+                    AND medicines != 'N/A'
+                    AND medicines != 'None'
                     AND (pharmacy_status = 'pending' OR pharmacy_status IS NULL)
-                    ORDER BY consultation_time ASC
+                    ORDER BY created_time DESC
                     """;
 
-            try (Statement stmt = connection.createStatement()) {
-                ResultSet rs = stmt.executeQuery(sql);
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                ResultSet rs = pstmt.executeQuery();
 
                 while (rs.next()) {
                     PharmacyRecord record = new PharmacyRecord();
                     record.setId(rs.getLong("id"));
                     record.setPatientId(rs.getString("patient_id"));
-                    record.setPatientName(rs.getString("patient_name"));
+                    record.setIssue(rs.getString("issue"));
                     record.setMedicines(rs.getString("medicines"));
                     record.setTests(rs.getString("tests"));
-                    record.setToken(rs.getInt("token"));
-                    record.setConsultationTime(rs.getTimestamp("consultation_time").toLocalDateTime());
-                    record.setConsultationStatus(rs.getString("consultation_status"));
+                    record.setNextVisitDays(rs.getString("next_visit_days"));
+
+                    Timestamp createdTime = rs.getTimestamp("created_time");
+                    if (createdTime != null) {
+                        record.setCreatedTime(createdTime.toLocalDateTime());
+                    } else {
+                        record.setCreatedTime(LocalDateTime.now());
+                    }
+
                     record.setPharmacyStatus(rs.getString("pharmacy_status"));
                     records.add(record);
                 }
+
+                System.out.println("Loaded " + records.size() + " pending pharmacy records");
+
             } catch (SQLException e) {
                 System.err.println("Error loading pending pharmacy records: " + e.getMessage());
+                e.printStackTrace();
             }
             return records;
         }
@@ -233,29 +238,34 @@ public class PharmacyWebApp {
         static List<PharmacyRecord> getCompletedPharmacyRecords() {
             List<PharmacyRecord> records = new ArrayList<>();
             String sql = """
-                    SELECT id, patient_id, patient_name, medicines, tests, token, 
-                           consultation_time, consultation_status, pharmacy_status,
-                           pharmacy_completed_time
+                    SELECT id, patient_id, issue, medicines, tests, next_visit_days,
+                           created_time, pharmacy_status, pharmacy_completed_time
                     FROM doctors 
-                    WHERE consultation_status = 'completed' 
-                    AND pharmacy_status = 'completed'
+                    WHERE pharmacy_status = 'completed'
+                    AND medicines IS NOT NULL 
+                    AND medicines != '' 
+                    AND medicines != 'N/A'
                     ORDER BY pharmacy_completed_time DESC
                     LIMIT 50
                     """;
 
-            try (Statement stmt = connection.createStatement()) {
-                ResultSet rs = stmt.executeQuery(sql);
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                ResultSet rs = pstmt.executeQuery();
 
                 while (rs.next()) {
                     PharmacyRecord record = new PharmacyRecord();
                     record.setId(rs.getLong("id"));
                     record.setPatientId(rs.getString("patient_id"));
-                    record.setPatientName(rs.getString("patient_name"));
+                    record.setIssue(rs.getString("issue"));
                     record.setMedicines(rs.getString("medicines"));
                     record.setTests(rs.getString("tests"));
-                    record.setToken(rs.getInt("token"));
-                    record.setConsultationTime(rs.getTimestamp("consultation_time").toLocalDateTime());
-                    record.setConsultationStatus(rs.getString("consultation_status"));
+                    record.setNextVisitDays(rs.getString("next_visit_days"));
+
+                    Timestamp createdTime = rs.getTimestamp("created_time");
+                    if (createdTime != null) {
+                        record.setCreatedTime(createdTime.toLocalDateTime());
+                    }
+
                     record.setPharmacyStatus(rs.getString("pharmacy_status"));
 
                     Timestamp pharmacyTime = rs.getTimestamp("pharmacy_completed_time");
@@ -264,8 +274,12 @@ public class PharmacyWebApp {
                     }
                     records.add(record);
                 }
+
+                System.out.println("Loaded " + records.size() + " completed pharmacy records");
+
             } catch (SQLException e) {
                 System.err.println("Error loading completed pharmacy records: " + e.getMessage());
+                e.printStackTrace();
             }
             return records;
         }
@@ -278,7 +292,10 @@ public class PharmacyWebApp {
                     UPDATE doctors 
                     SET pharmacy_status = 'completed', 
                         pharmacy_completed_time = CURRENT_TIMESTAMP 
-                    WHERE id = ? AND consultation_status = 'completed'
+                    WHERE id = ? 
+                    AND medicines IS NOT NULL 
+                    AND medicines != '' 
+                    AND medicines != 'N/A'
                     """;
 
             try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
@@ -288,9 +305,12 @@ public class PharmacyWebApp {
                 if (rowsAffected > 0) {
                     System.out.println("✓ Pharmacy record completed: ID " + recordId);
                     return true;
+                } else {
+                    System.out.println("✗ No rows affected for pharmacy record: ID " + recordId);
                 }
             } catch (SQLException e) {
                 System.err.println("✗ Error marking pharmacy record as completed: " + e.getMessage());
+                e.printStackTrace();
             }
             return false;
         }
@@ -305,7 +325,10 @@ public class PharmacyWebApp {
                 // Pending count
                 ResultSet rs = stmt.executeQuery("""
                         SELECT COUNT(*) as count FROM doctors 
-                        WHERE consultation_status = 'completed' 
+                        WHERE medicines IS NOT NULL 
+                        AND medicines != '' 
+                        AND medicines != 'N/A'
+                        AND medicines != 'None'
                         AND (pharmacy_status = 'pending' OR pharmacy_status IS NULL)
                         """);
                 if (rs.next()) {
@@ -331,8 +354,13 @@ public class PharmacyWebApp {
                     stats.put("totalCompleted", rs.getInt("count"));
                 }
 
+                System.out.println("Pharmacy Stats - Pending: " + stats.get("pending") +
+                        ", Today: " + stats.get("todayCompleted") +
+                        ", Total: " + stats.get("totalCompleted"));
+
             } catch (SQLException e) {
                 System.err.println("Error loading pharmacy stats: " + e.getMessage());
+                e.printStackTrace();
                 stats.put("pending", 0);
                 stats.put("todayCompleted", 0);
                 stats.put("totalCompleted", 0);
@@ -503,6 +531,7 @@ public class PharmacyWebApp {
                     String idStr = json.substring(start, end).trim();
                     return Long.parseLong(idStr);
                 } catch (Exception e) {
+                    System.err.println("Error parsing record ID: " + e.getMessage());
                     return null;
                 }
             }
@@ -535,7 +564,7 @@ public class PharmacyWebApp {
 
     private static String escapeJson(String str) {
         if (str == null) return "";
-        return str.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
+        return str.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\\", "\\\\");
     }
 
     public static void main(String[] args) {
@@ -581,7 +610,7 @@ public class PharmacyWebApp {
             System.out.println("🌐 Server running at: http://localhost:" + SERVER_PORT);
             System.out.println("💊 Access pharmacy dashboard at: http://localhost:" + SERVER_PORT);
             System.out.println("💾 Database: " + DB_URL);
-            System.out.println("🔗 Receives data from Doctor System at: http://localhost:5001");
+            System.out.println("🔗 Receives data from Doctor System");
             System.out.println("🔄 Server is ready to manage pharmacy records...");
             System.out.println("\n📊 API Endpoints:");
             System.out.println("  GET  /api/pending-records - Get pending pharmacy records");
@@ -589,7 +618,7 @@ public class PharmacyWebApp {
             System.out.println("  POST /api/complete-pharmacy - Mark pharmacy record as completed");
             System.out.println("  GET  /api/stats - Get pharmacy statistics");
             System.out.println("\n💊 Pharmacy Workflow:");
-            System.out.println("  1. Doctor completes consultation → Data appears in pharmacy");
+            System.out.println("  1. Doctor prescribes medicines → Data appears in pharmacy");
             System.out.println("  2. Pharmacy dispenses medicines → Mark as completed");
             System.out.println("  3. Completed records move to history");
             System.out.println("\n⚠  To stop server: Press Ctrl+C");
@@ -721,6 +750,7 @@ public class PharmacyWebApp {
                             border: none;
                             font-weight: 600;
                             font-size: 0.9rem;
+                            padding: 12px 8px;
                         }
                 
                         .table tbody tr {
@@ -730,6 +760,11 @@ public class PharmacyWebApp {
                         .table tbody tr:hover {
                             background: #f0fdfa;
                             cursor: default;
+                        }
+                
+                        .table tbody td {
+                            padding: 12px 8px;
+                            vertical-align: middle;
                         }
                 
                         .btn {
@@ -778,10 +813,16 @@ public class PharmacyWebApp {
                             color: white;
                         }
                 
-                        .medicine-cell, .test-cell {
-                            max-width: 200px;
+                        .medicine-cell, .test-cell, .issue-cell {
+                            max-width: 250px;
                             word-wrap: break-word;
                             white-space: pre-wrap;
+                            font-size: 0.9rem;
+                        }
+                
+                        .patient-id-cell {
+                            font-weight: bold;
+                            color: var(--primary-color);
                         }
                 
                         .badge {
@@ -843,6 +884,21 @@ public class PharmacyWebApp {
                             max-width: 350px;
                         }
                 
+                        .loading-spinner {
+                            display: inline-block;
+                            width: 20px;
+                            height: 20px;
+                            border: 2px solid #f3f3f3;
+                            border-top: 2px solid var(--primary-color);
+                            border-radius: 50%;
+                            animation: spin 1s linear infinite;
+                        }
+                
+                        @keyframes spin {
+                            0% { transform: rotate(0deg); }
+                            100% { transform: rotate(360deg); }
+                        }
+                
                         @media (max-width: 768px) {
                             .stats-container {
                                 flex-direction: column;
@@ -854,8 +910,8 @@ public class PharmacyWebApp {
                                 padding: 20px;
                             }
                 
-                            .medicine-cell, .test-cell {
-                                max-width: 120px;
+                            .medicine-cell, .test-cell, .issue-cell {
+                                max-width: 150px;
                                 font-size: 0.8rem;
                             }
                 
@@ -864,6 +920,12 @@ public class PharmacyWebApp {
                                 right: 20px;
                                 width: 50px;
                                 height: 50px;
+                            }
+                
+                            .table thead th,
+                            .table tbody td {
+                                padding: 8px 4px;
+                                font-size: 0.8rem;
                             }
                         }
                     </style>
@@ -931,19 +993,19 @@ public class PharmacyWebApp {
                                             <table class="table table-hover">
                                                 <thead>
                                                     <tr>
-                                                        <th>Token</th>
-                                                        <th>Patient ID</th>
-                                                        <th>Patient Name</th>
-                                                        <th>Medicines</th>
-                                                        <th>Tests</th>
-                                                        <th>Consultation Time</th>
-                                                        <th>Action</th>
+                                                        <th style="width: 12%;">Patient ID</th>
+                                                        <th style="width: 20%;">Issue/Complaint</th>
+                                                        <th style="width: 25%;">Medicines</th>
+                                                        <th style="width: 15%;">Tests</th>
+                                                        <th style="width: 10%;">Next Visit</th>
+                                                        <th style="width: 13%;">Prescribed Time</th>
+                                                        <th style="width: 5%;">Action</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody id="pendingTableBody">
                                                     <tr>
                                                         <td colspan="7" class="text-center py-4">
-                                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading pending prescriptions...
+                                                            <div class="loading-spinner me-2"></div>Loading pending prescriptions...
                                                         </td>
                                                     </tr>
                                                 </tbody>
@@ -965,19 +1027,19 @@ public class PharmacyWebApp {
                                             <table class="table table-hover">
                                                 <thead>
                                                     <tr>
-                                                        <th>Token</th>
-                                                        <th>Patient ID</th>
-                                                        <th>Patient Name</th>
-                                                        <th>Medicines</th>
-                                                        <th>Tests</th>
-                                                        <th>Consultation Time</th>
-                                                        <th>Completed Time</th>
+                                                        <th style="width: 12%;">Patient ID</th>
+                                                        <th style="width: 18%;">Issue/Complaint</th>
+                                                        <th style="width: 22%;">Medicines</th>
+                                                        <th style="width: 12%;">Tests</th>
+                                                        <th style="width: 8%;">Next Visit</th>
+                                                        <th style="width: 14%;">Prescribed Time</th>
+                                                        <th style="width: 14%;">Completed Time</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody id="completedTableBody">
                                                     <tr>
                                                         <td colspan="7" class="text-center py-4">
-                                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading completed records...
+                                                            <div class="loading-spinner me-2"></div>Loading completed records...
                                                         </td>
                                                     </tr>
                                                 </tbody>
@@ -990,7 +1052,7 @@ public class PharmacyWebApp {
                     </div>
                 
                     <!-- Refresh Button -->
-                    <button class="refresh-btn" id="refreshBtn" onclick="pharmacySystem.loadAllData()">
+                    <button class="refresh-btn" id="refreshBtn" onclick="pharmacySystem.loadAllData()" title="Refresh Data">
                         <i class="fas fa-sync-alt"></i>
                     </button>
                 
@@ -1000,23 +1062,27 @@ public class PharmacyWebApp {
                         class PharmacySystem {
                             constructor() {
                                 this.refreshInterval = null;
+                                this.lastRefreshTime = null;
                                 this.initializeSystem();
                             }
                 
                             initializeSystem() {
+                                console.log('💊 Initializing Pharmacy Management System...');
                                 this.loadAllData();
                                 this.setupAutoRefresh();
                                 this.attachEventListeners();
-                                console.log('Pharmacy Management System initialized');
+                                console.log('✅ Pharmacy Management System initialized');
                             }
                 
                             attachEventListeners() {
                                 // Tab change events
                                 document.getElementById('pending-tab').addEventListener('shown.bs.tab', () => {
+                                    console.log('Switched to Pending tab');
                                     this.loadPendingRecords();
                                 });
                 
                                 document.getElementById('completed-tab').addEventListener('shown.bs.tab', () => {
+                                    console.log('Switched to Completed tab');
                                     this.loadCompletedRecords();
                                 });
                             }
@@ -1029,12 +1095,16 @@ public class PharmacyWebApp {
                                     if (document.getElementById('pending-tab').classList.contains('active')) {
                                         this.loadPendingRecords();
                                     }
+                                    this.lastRefreshTime = new Date();
                                 }, 10000);
+                                console.log('🔄 Auto-refresh setup: every 10 seconds');
                             }
                 
                             async loadAllData() {
                                 const refreshBtn = document.getElementById('refreshBtn');
                                 refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+                
+                                console.log('🔄 Loading all pharmacy data...');
                 
                                 try {
                                     await Promise.all([
@@ -1043,8 +1113,9 @@ public class PharmacyWebApp {
                                         this.loadCompletedRecords()
                                     ]);
                                     this.showNotification('Data refreshed successfully', 'success');
+                                    console.log('✅ All data loaded successfully');
                                 } catch (error) {
-                                    console.error('Error loading data:', error);
+                                    console.error('❌ Error loading data:', error);
                                     this.showNotification('Error refreshing data', 'danger');
                                 } finally {
                                     refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
@@ -1053,17 +1124,22 @@ public class PharmacyWebApp {
                 
                             async loadStats() {
                                 try {
+                                    console.log('📊 Loading pharmacy statistics...');
                                     const response = await fetch('/api/stats');
                                     if (response.ok) {
                                         const stats = await response.json();
+                                        console.log('📊 Stats loaded:', stats);
+                
                                         document.getElementById('pendingCount').textContent = stats.pending || 0;
                                         document.getElementById('todayCompletedCount').textContent = stats.todayCompleted || 0;
                                         document.getElementById('totalCompletedCount').textContent = stats.totalCompleted || 0;
                                         document.getElementById('pendingBadge').textContent = stats.pending || 0;
                                         document.getElementById('completedBadge').textContent = stats.totalCompleted || 0;
+                                    } else {
+                                        console.error('❌ Failed to load stats, status:', response.status);
                                     }
                                 } catch (error) {
-                                    console.log('Loading stats...');
+                                    console.error('❌ Error loading stats:', error);
                                 }
                             }
                 
@@ -1072,26 +1148,31 @@ public class PharmacyWebApp {
                                 tbody.innerHTML = `
                                     <tr>
                                         <td colspan="7" class="text-center py-4">
-                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading pending prescriptions...
+                                            <div class="loading-spinner me-2"></div>Loading pending prescriptions...
                                         </td>
                                     </tr>
                                 `;
                 
                                 try {
+                                    console.log('⏳ Loading pending pharmacy records...');
                                     const response = await fetch('/api/pending-records');
                                     if (response.ok) {
                                         const records = await response.json();
+                                        console.log('📋 Pending records loaded:', records.length, 'records');
                                         this.displayPendingRecords(records);
                                     } else {
+                                        console.error('❌ Failed to load pending records, status:', response.status);
                                         throw new Error('Failed to load pending records');
                                     }
                                 } catch (error) {
+                                    console.error('❌ Error loading pending records:', error);
                                     tbody.innerHTML = `
                                         <tr>
                                             <td colspan="7" class="text-center py-4">
                                                 <div class="empty-state">
-                                                    <i class="fas fa-server text-muted"></i>
-                                                    <p class="mt-3">Backend server required for pharmacy data</p>
+                                                    <i class="fas fa-exclamation-triangle text-warning"></i>
+                                                    <p class="mt-3">Error connecting to database</p>
+                                                    <small class="text-muted">Please ensure the backend server is running</small>
                                                 </div>
                                             </td>
                                         </tr>
@@ -1104,26 +1185,31 @@ public class PharmacyWebApp {
                                 tbody.innerHTML = `
                                     <tr>
                                         <td colspan="7" class="text-center py-4">
-                                            <i class="fas fa-spinner fa-spin me-2"></i>Loading completed records...
+                                            <div class="loading-spinner me-2"></div>Loading completed records...
                                         </td>
                                     </tr>
                                 `;
                 
                                 try {
+                                    console.log('✅ Loading completed pharmacy records...');
                                     const response = await fetch('/api/completed-records');
                                     if (response.ok) {
                                         const records = await response.json();
+                                        console.log('📋 Completed records loaded:', records.length, 'records');
                                         this.displayCompletedRecords(records);
                                     } else {
+                                        console.error('❌ Failed to load completed records, status:', response.status);
                                         throw new Error('Failed to load completed records');
                                     }
                                 } catch (error) {
+                                    console.error('❌ Error loading completed records:', error);
                                     tbody.innerHTML = `
                                         <tr>
                                             <td colspan="7" class="text-center py-4">
                                                 <div class="empty-state">
-                                                    <i class="fas fa-server text-muted"></i>
-                                                    <p class="mt-3">Backend server required for pharmacy data</p>
+                                                    <i class="fas fa-exclamation-triangle text-warning"></i>
+                                                    <p class="mt-3">Error connecting to database</p>
+                                                    <small class="text-muted">Please ensure the backend server is running</small>
                                                 </div>
                                             </td>
                                         </tr>
@@ -1141,7 +1227,7 @@ public class PharmacyWebApp {
                                                 <div class="empty-state">
                                                     <i class="fas fa-prescription-bottle-alt"></i>
                                                     <p class="mt-3">No pending prescriptions</p>
-                                                    <small class="text-muted">Completed consultations will appear here</small>
+                                                    <small class="text-muted">Prescribed medicines will appear here when doctors complete consultations</small>
                                                 </div>
                                             </td>
                                         </tr>
@@ -1150,38 +1236,49 @@ public class PharmacyWebApp {
                                 }
                 
                                 tbody.innerHTML = records.map(record => {
-                                    const consultationTime = new Date(record.consultationTime);
+                                    const prescribedTime = new Date(record.createdTime);
                                     const now = new Date();
-                                    const timeDiff = (now - consultationTime) / (1000 * 60); // minutes
+                                    const timeDiff = (now - prescribedTime) / (1000 * 60); // minutes
                                     const isUrgent = timeDiff > 30; // More than 30 minutes waiting
                 
                                     return `
                                         <tr ${isUrgent ? 'class="urgent-record"' : ''}>
-                                            <td>
-                                                <span class="badge bg-primary">${record.token}</span>
+                                            <td class="patient-id-cell">
+                                                ${this.escapeHtml(record.patientId || 'N/A')}
                                                 ${isUrgent ? '<i class="fas fa-exclamation-triangle text-danger ms-2" title="Waiting > 30 minutes"></i>' : ''}
                                             </td>
-                                            <td><strong>${record.patientId}</strong></td>
-                                            <td>${record.patientName}</td>
+                                            <td class="issue-cell">
+                                                ${this.escapeHtml(record.issue || 'No issue recorded')}
+                                            </td>
                                             <td class="medicine-cell">
-                                                <small>${record.medicines || 'No medicines prescribed'}</small>
+                                                <strong>${this.escapeHtml(record.medicines || 'No medicines prescribed')}</strong>
                                             </td>
                                             <td class="test-cell">
-                                                <small>${record.tests || 'No tests prescribed'}</small>
+                                                ${this.escapeHtml(record.tests || 'No tests')}
                                             </td>
                                             <td>
-                                                <small>${consultationTime.toLocaleString()}</small>
-                                                <br><small class="text-muted">${this.getTimeAgo(consultationTime)} ago</small>
+                                                <small>${record.nextVisitDays ? record.nextVisitDays + ' days' : 'No follow-up'}</small>
+                                            </td>
+                                            <td>
+                                                <small>${prescribedTime.toLocaleString('en-US', {
+                                                    month: 'short', 
+                                                    day: 'numeric', 
+                                                    hour: '2-digit', 
+                                                    minute: '2-digit'
+                                                })}</small>
+                                                <br><small class="text-muted">${this.getTimeAgo(prescribedTime)} ago</small>
                                             </td>
                                             <td>
                                                 <button class="btn btn-success btn-sm" 
-                                                        onclick="pharmacySystem.completePharmacy(${record.id}, '${record.patientName}')">
-                                                    <i class="fas fa-check me-1"></i>Complete
+                                                        onclick="pharmacySystem.completePharmacy(${record.id}, '${this.escapeHtml(record.patientId)}')">
+                                                    <i class="fas fa-check me-1"></i>Dispense
                                                 </button>
                                             </td>
                                         </tr>
                                     `;
                                 }).join('');
+                
+                                console.log(`✅ Displayed ${records.length} pending prescriptions`);
                             }
                 
                             displayCompletedRecords(records) {
@@ -1194,7 +1291,7 @@ public class PharmacyWebApp {
                                                 <div class="empty-state">
                                                     <i class="fas fa-check-circle"></i>
                                                     <p class="mt-3">No completed records</p>
-                                                    <small class="text-muted">Completed prescriptions will appear here</small>
+                                                    <small class="text-muted">Dispensed medicines will appear here</small>
                                                 </div>
                                             </td>
                                         </tr>
@@ -1203,33 +1300,54 @@ public class PharmacyWebApp {
                                 }
                 
                                 tbody.innerHTML = records.map(record => {
-                                    const consultationTime = new Date(record.consultationTime);
-                                    const pharmacyTime = new Date(record.pharmacyCompletedTime || record.consultationTime);
+                                    const prescribedTime = new Date(record.createdTime);
+                                    const dispensedTime = record.pharmacyCompletedTime ? 
+                                        new Date(record.pharmacyCompletedTime) : prescribedTime;
                 
                                     return `
                                         <tr>
-                                            <td><span class="badge bg-success">${record.token}</span></td>
-                                            <td><strong>${record.patientId}</strong></td>
-                                            <td>${record.patientName}</td>
+                                            <td class="patient-id-cell">${this.escapeHtml(record.patientId || 'N/A')}</td>
+                                            <td class="issue-cell">
+                                                ${this.escapeHtml(record.issue || 'No issue recorded')}
+                                            </td>
                                             <td class="medicine-cell">
-                                                <small>${record.medicines || 'No medicines prescribed'}</small>
+                                                <strong>${this.escapeHtml(record.medicines || 'No medicines prescribed')}</strong>
                                             </td>
                                             <td class="test-cell">
-                                                <small>${record.tests || 'No tests prescribed'}</small>
+                                                ${this.escapeHtml(record.tests || 'No tests')}
                                             </td>
-                                            <td><small>${consultationTime.toLocaleString()}</small></td>
                                             <td>
-                                                <small class="text-success">${pharmacyTime.toLocaleString()}</small>
+                                                <small>${record.nextVisitDays ? record.nextVisitDays + ' days' : 'No follow-up'}</small>
+                                            </td>
+                                            <td>
+                                                <small>${prescribedTime.toLocaleString('en-US', {
+                                                    month: 'short', 
+                                                    day: 'numeric', 
+                                                    hour: '2-digit', 
+                                                    minute: '2-digit'
+                                                })}</small>
+                                            </td>
+                                            <td>
+                                                <small class="text-success">${dispensedTime.toLocaleString('en-US', {
+                                                    month: 'short', 
+                                                    day: 'numeric', 
+                                                    hour: '2-digit', 
+                                                    minute: '2-digit'
+                                                })}</small>
                                             </td>
                                         </tr>
                                     `;
                                 }).join('');
+                
+                                console.log(`✅ Displayed ${records.length} completed records`);
                             }
                 
-                            async completePharmacy(recordId, patientName) {
-                                if (!confirm(`Mark prescription as completed for ${patientName}?`)) {
+                            async completePharmacy(recordId, patientId) {
+                                if (!confirm(`Mark medicines as dispensed for Patient ID: ${patientId}?`)) {
                                     return;
                                 }
+                
+                                console.log(`🔄 Completing pharmacy record for Patient ID: ${patientId}, Record ID: ${recordId}`);
                 
                                 try {
                                     const response = await fetch('/api/complete-pharmacy', {
@@ -1241,16 +1359,19 @@ public class PharmacyWebApp {
                                     });
                 
                                     const result = await response.json();
+                                    console.log('📋 Completion response:', result);
                 
                                     if (response.ok && result.success) {
-                                        this.showNotification(`Prescription completed for ${patientName}`, 'success');
+                                        this.showNotification(`✅ Medicines dispensed for ${patientId}`, 'success');
+                                        console.log(`✅ Successfully dispensed medicines for ${patientId}`);
                                         this.loadAllData(); // Refresh all data
                                     } else {
-                                        this.showNotification(result.message || 'Failed to complete prescription', 'danger');
+                                        this.showNotification(result.message || 'Failed to mark as dispensed', 'danger');
+                                        console.error('❌ Failed to complete pharmacy record:', result.message);
                                     }
                                 } catch (error) {
-                                    console.error('Error completing pharmacy record:', error);
-                                    this.showNotification('Error completing prescription', 'danger');
+                                    console.error('❌ Error completing pharmacy record:', error);
+                                    this.showNotification('Error dispensing medicines', 'danger');
                                 }
                             }
                 
@@ -1266,6 +1387,16 @@ public class PharmacyWebApp {
                 
                                 const diffInDays = Math.floor(diffInHours / 24);
                                 return `${diffInDays} day${diffInDays > 1 ? 's' : ''}`;
+                            }
+                
+                            escapeHtml(unsafe) {
+                                if (!unsafe) return '';
+                                return unsafe
+                                    .replace(/&/g, "&amp;")
+                                    .replace(/</g, "&lt;")
+                                    .replace(/>/g, "&gt;")
+                                    .replace(/"/g, "&quot;")
+                                    .replace(/'/g, "&#039;");
                             }
                 
                             showNotification(message, type) {
@@ -1289,12 +1420,28 @@ public class PharmacyWebApp {
                                     }
                                 }, 5000);
                             }
+                
+                            // Cleanup method
+                            destroy() {
+                                if (this.refreshInterval) {
+                                    clearInterval(this.refreshInterval);
+                                    console.log('🔄 Auto-refresh stopped');
+                                }
+                            }
                         }
                 
                         // Initialize the system
                         let pharmacySystem;
                         document.addEventListener('DOMContentLoaded', () => {
+                            console.log('🚀 DOM loaded, initializing Pharmacy System...');
                             pharmacySystem = new PharmacySystem();
+                        });
+                
+                        // Cleanup on page unload
+                        window.addEventListener('beforeunload', () => {
+                            if (pharmacySystem) {
+                                pharmacySystem.destroy();
+                            }
                         });
                     </script>
                 </body>

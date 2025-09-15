@@ -1,6 +1,6 @@
-// Complete Patient Registration System with Bottom Notifications
+// Fixed Patient Registration System with Proper Patient ID Logic
 // File: HealthcareWebApp2.java
-// Enhanced with bottom slide-up notifications
+// Fixed patient ID assignment and 3-hour gap logic
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
@@ -363,6 +363,46 @@ public class HealthcareWebApp2 {
             return 1;
         }
 
+        /**
+         * FIXED: Find existing patient by exact phone number and name match
+         * This will return the patient record only if BOTH phone and name match exactly
+         */
+        static Patient findExistingPatientByPhoneAndName(String phoneNumber, String name) {
+            String sql = """
+                        SELECT * FROM patients 
+                        WHERE phone_number = ? 
+                        AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+                        ORDER BY registration_time DESC 
+                        LIMIT 1
+                    """;
+
+            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                pstmt.setString(1, phoneNumber);
+                pstmt.setString(2, name);
+                ResultSet rs = pstmt.executeQuery();
+
+                if (rs.next()) {
+                    Patient patient = new Patient();
+                    patient.setId(rs.getLong("id"));
+                    patient.setPhoneNumber(rs.getString("phone_number"));
+                    patient.setName(rs.getString("name"));
+                    patient.setEmail(rs.getString("email"));
+                    patient.setPatientId(rs.getString("patient_id"));
+                    patient.setAge(rs.getInt("age"));
+                    patient.setGender(rs.getString("gender"));
+                    patient.setLocation(rs.getString("location"));
+                    patient.setIssue(rs.getString("issue"));
+                    patient.setToken(rs.getInt("token"));
+                    patient.setRegistrationTime(rs.getTimestamp("registration_time").toLocalDateTime());
+                    patient.setRegistrationDate(rs.getDate("registration_date").toLocalDate());
+                    return patient;
+                }
+            } catch (SQLException e) {
+                System.err.println("Error finding existing patient by phone and name: " + e.getMessage());
+            }
+            return null;
+        }
+
         static Patient findExistingPatient(String phoneNumber) {
             String sql = "SELECT * FROM patients WHERE phone_number = ? ORDER BY id DESC LIMIT 1";
 
@@ -392,76 +432,25 @@ public class HealthcareWebApp2 {
             return null;
         }
 
-        /**
-         * Find existing patient by phone number but not registered within last 3 hours
-         */
-        static Patient findExistingPatientForReuse(String phoneNumber, String name) {
-            // Find the most recent patient with this phone number who is NOT the same person
-            // OR the same person but registered more than 3 hours ago
-            String sql = """
-                        SELECT * FROM patients 
-                        WHERE phone_number = ? 
-                        AND (
-                            LOWER(TRIM(name)) != LOWER(TRIM(?))
-                            OR registration_time < (CURRENT_TIMESTAMP - INTERVAL '3 hours')
-                        )
-                        ORDER BY id DESC 
-                        LIMIT 1
-                    """;
-
-            try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-                pstmt.setString(1, phoneNumber);
-                pstmt.setString(2, name);
-                ResultSet rs = pstmt.executeQuery();
-
-                if (rs.next()) {
-                    Patient patient = new Patient();
-                    patient.setId(rs.getLong("id"));
-                    patient.setPhoneNumber(rs.getString("phone_number"));
-                    patient.setName(rs.getString("name"));
-                    patient.setEmail(rs.getString("email"));
-                    patient.setPatientId(rs.getString("patient_id"));
-                    patient.setAge(rs.getInt("age"));
-                    patient.setGender(rs.getString("gender"));
-                    patient.setLocation(rs.getString("location"));
-                    patient.setIssue(rs.getString("issue"));
-                    patient.setToken(rs.getInt("token"));
-                    patient.setRegistrationTime(rs.getTimestamp("registration_time").toLocalDateTime());
-                    patient.setRegistrationDate(rs.getDate("registration_date").toLocalDate());
-                    return patient;
-                }
-            } catch (SQLException e) {
-                System.err.println("Error finding existing patient for reuse: " + e.getMessage());
-            }
-            return null;
-        }
-
         static Patient registerPatient(Patient patient) {
-            // First check if the same patient has registered within the last 3 hours
+            // First check if the same patient (phone + name) has registered within the last 3 hours
             if (hasRecentRegistration(patient.getPhoneNumber(), patient.getName())) {
                 String timeLeft = getTimeUntilNextRegistration(patient.getPhoneNumber(), patient.getName());
                 throw new RuntimeException("Same patient cannot register again within 3 hours. Please wait " + timeLeft + " before registering again.");
             }
 
-            // Check if this phone number has been used before (but not by the same person within 3 hours)
-            Patient existingPatient = findExistingPatientForReuse(patient.getPhoneNumber(), patient.getName());
+            // FIXED: Check if this exact patient (same phone + name) exists
+            Patient existingSamePatient = findExistingPatientByPhoneAndName(patient.getPhoneNumber(), patient.getName());
 
-            if (existingPatient != null) {
-                // Check if it's the same person (same name) who registered more than 3 hours ago
-                if (existingPatient.getName().trim().equalsIgnoreCase(patient.getName().trim())) {
-                    // Same person returning after 3+ hours - reuse their patient ID
-                    patient.setPatientId(existingPatient.getPatientId());
-                    System.out.println("✓ Returning patient (after 3+ hours): " + existingPatient.getPatientId());
-                } else {
-                    // Different person using same phone number - still reuse the patient ID
-                    // (This allows family members to use the same phone number)
-                    patient.setPatientId(existingPatient.getPatientId());
-                    System.out.println("✓ Same phone, different person: " + existingPatient.getPatientId());
-                }
+            if (existingSamePatient != null) {
+                // Same person returning after 3+ hours - reuse their patient ID
+                patient.setPatientId(existingSamePatient.getPatientId());
+                System.out.println("✓ Returning patient (same phone + name): " + existingSamePatient.getPatientId());
             } else {
-                // Completely new phone number - generate new patient ID
+                // Either completely new phone number OR same phone with different name
+                // Both cases should get a NEW patient ID
                 patient.setPatientId(generatePatientId());
-                System.out.println("✓ New patient with new phone number: " + patient.getPatientId());
+                System.out.println("✓ New patient ID assigned: " + patient.getPatientId());
             }
 
             // Assign next token for today
@@ -864,9 +853,10 @@ public class HealthcareWebApp2 {
             System.out.println("  GET  /api/patient-history/{phoneNumber} - Get patient history");
             System.out.println("  GET  /api/stats - Get today's registration count");
             System.out.println("\n📋 Registration Rules:");
-            System.out.println("  ✓ Same phone number, different names: Allowed (family members)");
-            System.out.println("  ✓ Same patient after 3+ hours: Allowed (returning patient)");
-            System.out.println("  ✗ Same patient within 3 hours: Blocked");
+            System.out.println("  ✓ Same phone + same name (after 3+ hours): REUSES SAME Patient ID");
+            System.out.println("  ✓ Same phone + different name: GETS NEW Patient ID");
+            System.out.println("  ✓ New phone number: GETS NEW Patient ID");
+            System.out.println("  ✗ Same phone + same name (within 3 hours): BLOCKED");
             System.out.println("\n⚠  To stop server: Press Ctrl+C");
 
             if (SERVER_PORT != 5000) {
@@ -1189,6 +1179,17 @@ public class HealthcareWebApp2 {
                             background-color: #dcfce7 !important;
                             border-left: 4px solid #16a34a;
                         }
+
+                        .fixed-note {
+                            background: #d1fae5;
+                            border: 2px solid #10b981;
+                            color: #065f46;
+                            padding: 15px;
+                            border-radius: 10px;
+                            font-size: 0.95rem;
+                            margin-bottom: 20px;
+                            font-weight: 600;
+                        }
                 
                         @media (max-width: 768px) {
                             .stats-container {
@@ -1250,11 +1251,9 @@ public class HealthcareWebApp2 {
                                 <!-- Registration Form -->
                                 <div class="col-lg-6">
                                     <div class="form-section">
-                                        <div class="warning-note">
-                                            <i class="fas fa-clock me-2"></i>
-                                            <strong>3-Hour Registration Gap:</strong> Same patient (phone + name) cannot register again within 3 hours. Family members can use the same phone number.
-                                        </div>
-                
+                               
+
+                                        
                                         <form id="registrationForm">
                                             <div class="mb-3">
                                                 <label class="form-label">
@@ -1339,10 +1338,7 @@ public class HealthcareWebApp2 {
                                             <i class="fas fa-history me-2"></i>Patient History
                                         </h5>
                 
-                                        <div class="info-note">
-                                            <i class="fas fa-mouse-pointer me-2"></i>
-                                            <strong>Color Codes:</strong> <span style="background:#fef3c7;padding:2px 6px;border-radius:4px;">Yellow = Recent (cannot register)</span> | <span style="background:#dcfce7;padding:2px 6px;border-radius:4px;">Green = Can register</span>
-                                        </div>
+                                        
                 
                                         <div class="table-responsive">
                                             <table class="table table-hover">
@@ -1373,7 +1369,7 @@ public class HealthcareWebApp2 {
                 
                     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
                     <script>
-                        // Enhanced Registration System with Bottom Notifications
+                        // FIXED Registration System with Bottom Notifications
                         class RegistrationSystem {
                             constructor() {
                                 this.phoneInputTimeout = null;
@@ -1387,13 +1383,12 @@ public class HealthcareWebApp2 {
                                 this.updateServerInfo();
                                 // Auto-refresh stats every 10 seconds
                                 setInterval(() => this.loadStats(), 10000);
-                                console.log('Healthcare Registration System with Bottom Notifications initialized');
+                                console.log('FIXED Healthcare Registration System with Bottom Notifications initialized');
                             }
                 
                             updateServerInfo() {
                                 const port = window.location.port || '80';
-                                // No need to update DOM element as it's removed, just log
-                                console.log(`Bottom Notifications Enabled - localhost:${port}`);
+                                console.log(`FIXED Bottom Notifications Enabled - localhost:${port}`);
                             }
                 
                             attachEventListeners() {
@@ -1661,7 +1656,7 @@ public class HealthcareWebApp2 {
                                 `;
                             }
                 
-                            // NEW BOTTOM NOTIFICATION SYSTEM
+                            // BOTTOM NOTIFICATION SYSTEM
                             showBottomNotification(message, type) {
                                 const container = document.getElementById('bottomNotifications');
                                 const notificationId = `notification-${++this.notificationCounter}`;
