@@ -1,6 +1,6 @@
-// Complete Fixed Pharmacy Management System
+// Complete Updated Pharmacy Management System
 // File: PharmacyWebApp.java
-// Fixed to properly display all prescription details
+// Updated to properly display all prescription details from doctors table
 
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
@@ -34,7 +34,7 @@ public class PharmacyWebApp {
         private String medicines;
         private String tests;
         private String nextVisitDays;
-        private LocalDateTime createdTime;
+        private LocalDateTime createdAt;
         private String pharmacyStatus;
         private LocalDateTime pharmacyCompletedTime;
 
@@ -43,74 +43,31 @@ public class PharmacyWebApp {
         }
 
         // Getters and setters
-        public Long getId() {
-            return id;
-        }
+        public Long getId() { return id; }
+        public void setId(Long id) { this.id = id; }
 
-        public void setId(Long id) {
-            this.id = id;
-        }
+        public String getPatientId() { return patientId; }
+        public void setPatientId(String patientId) { this.patientId = patientId; }
 
-        public String getPatientId() {
-            return patientId;
-        }
+        public String getIssue() { return issue; }
+        public void setIssue(String issue) { this.issue = issue; }
 
-        public void setPatientId(String patientId) {
-            this.patientId = patientId;
-        }
+        public String getMedicines() { return medicines; }
+        public void setMedicines(String medicines) { this.medicines = medicines; }
 
-        public String getIssue() {
-            return issue;
-        }
+        public String getTests() { return tests; }
+        public void setTests(String tests) { this.tests = tests; }
 
-        public void setIssue(String issue) {
-            this.issue = issue;
-        }
+        public String getNextVisitDays() { return nextVisitDays; }
+        public void setNextVisitDays(String nextVisitDays) { this.nextVisitDays = nextVisitDays; }
 
-        public String getMedicines() {
-            return medicines;
-        }
+        public LocalDateTime getCreatedAt() { return createdAt; }
+        public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 
-        public void setMedicines(String medicines) {
-            this.medicines = medicines;
-        }
+        public String getPharmacyStatus() { return pharmacyStatus; }
+        public void setPharmacyStatus(String pharmacyStatus) { this.pharmacyStatus = pharmacyStatus; }
 
-        public String getTests() {
-            return tests;
-        }
-
-        public void setTests(String tests) {
-            this.tests = tests;
-        }
-
-        public String getNextVisitDays() {
-            return nextVisitDays;
-        }
-
-        public void setNextVisitDays(String nextVisitDays) {
-            this.nextVisitDays = nextVisitDays;
-        }
-
-        public LocalDateTime getCreatedTime() {
-            return createdTime;
-        }
-
-        public void setCreatedTime(LocalDateTime createdTime) {
-            this.createdTime = createdTime;
-        }
-
-        public String getPharmacyStatus() {
-            return pharmacyStatus;
-        }
-
-        public void setPharmacyStatus(String pharmacyStatus) {
-            this.pharmacyStatus = pharmacyStatus;
-        }
-
-        public LocalDateTime getPharmacyCompletedTime() {
-            return pharmacyCompletedTime;
-        }
-
+        public LocalDateTime getPharmacyCompletedTime() { return pharmacyCompletedTime; }
         public void setPharmacyCompletedTime(LocalDateTime pharmacyCompletedTime) {
             this.pharmacyCompletedTime = pharmacyCompletedTime;
         }
@@ -118,7 +75,7 @@ public class PharmacyWebApp {
         public String toJson() {
             return String.format(
                     "{\"id\":%d,\"patientId\":\"%s\",\"issue\":\"%s\",\"medicines\":\"%s\"," +
-                            "\"tests\":\"%s\",\"nextVisitDays\":\"%s\",\"createdTime\":\"%s\"," +
+                            "\"tests\":\"%s\",\"nextVisitDays\":\"%s\",\"createdAt\":\"%s\"," +
                             "\"pharmacyStatus\":\"%s\",\"pharmacyCompletedTime\":\"%s\"}",
                     id != null ? id : 0,
                     escapeJson(patientId),
@@ -126,7 +83,7 @@ public class PharmacyWebApp {
                     escapeJson(medicines),
                     escapeJson(tests),
                     escapeJson(nextVisitDays),
-                    createdTime != null ? createdTime.toString() : "",
+                    createdAt != null ? createdAt.toString() : "",
                     escapeJson(pharmacyStatus),
                     pharmacyCompletedTime != null ? pharmacyCompletedTime.toString() : ""
             );
@@ -175,7 +132,7 @@ public class PharmacyWebApp {
                 columns.close();
 
                 // Update existing records to have pharmacy_status = 'pending' where medicines are prescribed
-                stmt.execute("UPDATE doctors SET pharmacy_status = 'pending' WHERE medicines IS NOT NULL AND medicines != '' AND medicines != 'N/A' AND pharmacy_status IS NULL");
+                stmt.execute("UPDATE doctors SET pharmacy_status = 'pending' WHERE medicines IS NOT NULL AND medicines != '' AND medicines != 'N/A' AND medicines != 'None' AND pharmacy_status IS NULL");
 
             } catch (SQLException e) {
                 System.err.println("✗ Error ensuring pharmacy columns: " + e.getMessage());
@@ -189,15 +146,17 @@ public class PharmacyWebApp {
             List<PharmacyRecord> records = new ArrayList<>();
             String sql = """
                     SELECT id, patient_id, issue, medicines, tests, next_visit_days,
-                           created_time, 
+                           created_at, 
                            COALESCE(pharmacy_status, 'pending') as pharmacy_status
                     FROM doctors 
                     WHERE medicines IS NOT NULL 
                     AND medicines != '' 
                     AND medicines != 'N/A'
                     AND medicines != 'None'
+                    AND medicines != '[null]'
+                    AND medicines != 'null'
                     AND (pharmacy_status = 'pending' OR pharmacy_status IS NULL)
-                    ORDER BY created_time DESC
+                    ORDER BY created_at DESC
                     """;
 
             try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
@@ -212,21 +171,21 @@ public class PharmacyWebApp {
                     record.setTests(rs.getString("tests"));
                     record.setNextVisitDays(rs.getString("next_visit_days"));
 
-                    Timestamp createdTime = rs.getTimestamp("created_time");
-                    if (createdTime != null) {
-                        record.setCreatedTime(createdTime.toLocalDateTime());
+                    Timestamp createdAt = rs.getTimestamp("created_at");
+                    if (createdAt != null) {
+                        record.setCreatedAt(createdAt.toLocalDateTime());
                     } else {
-                        record.setCreatedTime(LocalDateTime.now());
+                        record.setCreatedAt(LocalDateTime.now());
                     }
 
                     record.setPharmacyStatus(rs.getString("pharmacy_status"));
                     records.add(record);
                 }
 
-                System.out.println("Loaded " + records.size() + " pending pharmacy records");
+                System.out.println("✓ Loaded " + records.size() + " pending pharmacy records");
 
             } catch (SQLException e) {
-                System.err.println("Error loading pending pharmacy records: " + e.getMessage());
+                System.err.println("✗ Error loading pending pharmacy records: " + e.getMessage());
                 e.printStackTrace();
             }
             return records;
@@ -239,12 +198,15 @@ public class PharmacyWebApp {
             List<PharmacyRecord> records = new ArrayList<>();
             String sql = """
                     SELECT id, patient_id, issue, medicines, tests, next_visit_days,
-                           created_time, pharmacy_status, pharmacy_completed_time
+                           created_at, pharmacy_status, pharmacy_completed_time
                     FROM doctors 
                     WHERE pharmacy_status = 'completed'
                     AND medicines IS NOT NULL 
                     AND medicines != '' 
                     AND medicines != 'N/A'
+                    AND medicines != 'None'
+                    AND medicines != '[null]'
+                    AND medicines != 'null'
                     ORDER BY pharmacy_completed_time DESC
                     LIMIT 50
                     """;
@@ -261,9 +223,9 @@ public class PharmacyWebApp {
                     record.setTests(rs.getString("tests"));
                     record.setNextVisitDays(rs.getString("next_visit_days"));
 
-                    Timestamp createdTime = rs.getTimestamp("created_time");
-                    if (createdTime != null) {
-                        record.setCreatedTime(createdTime.toLocalDateTime());
+                    Timestamp createdAt = rs.getTimestamp("created_at");
+                    if (createdAt != null) {
+                        record.setCreatedAt(createdAt.toLocalDateTime());
                     }
 
                     record.setPharmacyStatus(rs.getString("pharmacy_status"));
@@ -275,10 +237,10 @@ public class PharmacyWebApp {
                     records.add(record);
                 }
 
-                System.out.println("Loaded " + records.size() + " completed pharmacy records");
+                System.out.println("✓ Loaded " + records.size() + " completed pharmacy records");
 
             } catch (SQLException e) {
-                System.err.println("Error loading completed pharmacy records: " + e.getMessage());
+                System.err.println("✗ Error loading completed pharmacy records: " + e.getMessage());
                 e.printStackTrace();
             }
             return records;
@@ -296,6 +258,9 @@ public class PharmacyWebApp {
                     AND medicines IS NOT NULL 
                     AND medicines != '' 
                     AND medicines != 'N/A'
+                    AND medicines != 'None'
+                    AND medicines != '[null]'
+                    AND medicines != 'null'
                     """;
 
             try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
@@ -329,6 +294,8 @@ public class PharmacyWebApp {
                         AND medicines != '' 
                         AND medicines != 'N/A'
                         AND medicines != 'None'
+                        AND medicines != '[null]'
+                        AND medicines != 'null'
                         AND (pharmacy_status = 'pending' OR pharmacy_status IS NULL)
                         """);
                 if (rs.next()) {
@@ -354,12 +321,12 @@ public class PharmacyWebApp {
                     stats.put("totalCompleted", rs.getInt("count"));
                 }
 
-                System.out.println("Pharmacy Stats - Pending: " + stats.get("pending") +
+                System.out.println("📊 Pharmacy Stats - Pending: " + stats.get("pending") +
                         ", Today: " + stats.get("todayCompleted") +
                         ", Total: " + stats.get("totalCompleted"));
 
             } catch (SQLException e) {
-                System.err.println("Error loading pharmacy stats: " + e.getMessage());
+                System.err.println("✗ Error loading pharmacy stats: " + e.getMessage());
                 e.printStackTrace();
                 stats.put("pending", 0);
                 stats.put("todayCompleted", 0);
@@ -496,7 +463,7 @@ public class PharmacyWebApp {
                     }
 
                 } catch (Exception e) {
-                    System.err.println("Pharmacy completion error: " + e.getMessage());
+                    System.err.println("✗ Pharmacy completion error: " + e.getMessage());
                     e.printStackTrace();
                     String errorResponse = String.format("{\"success\": false, \"message\": \"Server error: %s\"}",
                             escapeJson(e.getMessage()));
@@ -531,7 +498,7 @@ public class PharmacyWebApp {
                     String idStr = json.substring(start, end).trim();
                     return Long.parseLong(idStr);
                 } catch (Exception e) {
-                    System.err.println("Error parsing record ID: " + e.getMessage());
+                    System.err.println("✗ Error parsing record ID: " + e.getMessage());
                     return null;
                 }
             }
@@ -1236,7 +1203,7 @@ public class PharmacyWebApp {
                                 }
                 
                                 tbody.innerHTML = records.map(record => {
-                                    const prescribedTime = new Date(record.createdTime);
+                                    const prescribedTime = new Date(record.createdAt);
                                     const now = new Date();
                                     const timeDiff = (now - prescribedTime) / (1000 * 60); // minutes
                                     const isUrgent = timeDiff > 30; // More than 30 minutes waiting
@@ -1300,7 +1267,7 @@ public class PharmacyWebApp {
                                 }
                 
                                 tbody.innerHTML = records.map(record => {
-                                    const prescribedTime = new Date(record.createdTime);
+                                    const prescribedTime = new Date(record.createdAt);
                                     const dispensedTime = record.pharmacyCompletedTime ? 
                                         new Date(record.pharmacyCompletedTime) : prescribedTime;
                 
